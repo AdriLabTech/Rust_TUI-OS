@@ -28,9 +28,8 @@ RAM y gráfico de actividad.
 
 ## ¿Qué es TUI-OS?
 
-TUI-OS es un sistema operativo autocontenido construido a partir de un
-recorte de [MOROS] v0.13.0 (solo kernel + bootloader), en el que **todo vive
-dentro del kernel**: no hay espacio de usuario.
+TUI-OS es un sistema operativo autocontenido en el que **todo vive dentro del
+kernel**: no hay espacio de usuario.
 
 Al arrancar levanta el teclado PS/2, el reloj RTC, un puerto serie y un
 **escritorio TUI** que dibuja ventanas de ratatui 0.30 directamente en el
@@ -130,14 +129,9 @@ en la compilación con `make image keyboard=azerty`).
 
 ## Licencia
 
-MIT, igual que el MOROS original. TUI-OS deriva de [vinc/moros] v0.13.0
-(kernel + bootloader); el copyright y la licencia originales de MOROS se
-conservan en `LICENSE` y `CHANGELOG.md`.
+MIT. El copyright y la licencia originales se conservan en `LICENSE`.
 
 ## Documentación técnica
 
 El README técnico del proyecto (en inglés) está en `os-tui/README.md`, junto
-con `CONTRIBUTING.md`, `CHANGELOG.md` y `LICENSE`.
-
-[MOROS]: https://github.com/vinc/moros
-[vinc/moros]: https://github.com/vinc/moros
+con `CONTRIBUTING.md` y `LICENSE`.
