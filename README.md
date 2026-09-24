@@ -15,8 +15,7 @@ texto (TUI) dibujado directamente sobre el buffer VGA 80×25.**
 
 ### Terminal integrado
 
-El shell que vive dentro del kernel: `ls`, `cd`, `mkdir`, `mem`, `uptime`,
-`date`… con la sintaxis habitual de Unix.
+El shell que vive dentro del kernel con la sintaxis habitual de Unix.
 
 ![Terminal del sistema con comandos ejecutados](docs/comandos.png)
 
