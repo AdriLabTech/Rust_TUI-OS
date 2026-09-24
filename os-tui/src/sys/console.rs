@@ -1,0 +1,306 @@
+use crate::sys::fs::{FileIO, IO};
+
+use crate::sys;
+use crate::sys::x86::int;
+
+use alloc::string::{String, ToString};
+
+use core::fmt;
+use core::fmt::Write;
+use core::sync::atomic::{AtomicBool, Ordering};
+use spin::Mutex;
+
+pub static STDIN: Mutex<Input> = Mutex::new(Input::new());
+pub static ECHO: AtomicBool = AtomicBool::new(true);
+pub static RAW: AtomicBool = AtomicBool::new(false);
+
+pub const BS_KEY: char = '\x08'; // Backspace
+pub const EOT_KEY: char = '\x04'; // End of Transmission
+pub const ESC_KEY: char = '\x1B'; // Escape
+pub const ETX_KEY: char = '\x03'; // End of Text
+
+const MAX_INPUT: usize = 1024;
+
+pub struct Input {
+    buf: [char; MAX_INPUT],
+    len: usize
+}
+
+impl Input {
+    pub const fn new() -> Self {
+        Self {
+            buf: ['\0'; MAX_INPUT],
+            len: 0
+        }
+    }
+
+    pub const fn capacity(&self) -> usize {
+        MAX_INPUT
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    pub fn back(&self) -> Option<char> {
+        if self.len > 0 {
+            Some(self.buf[self.len - 1])
+        } else {
+            None
+        }
+    }
+
+    pub fn pop_back(&mut self) -> Option<char> {
+        if self.len > 0 {
+            self.len -= 1;
+            Some(self.buf[self.len])
+        } else {
+            None
+        }
+    }
+
+    pub fn pop_front(&mut self) -> Option<char> {
+        if self.len > 0 {
+            let c = self.buf[0];
+            self.buf.copy_within(1..self.len, 0);
+            self.len -= 1;
+            Some(c)
+        } else {
+            None
+        }
+    }
+
+    pub fn push_back(&mut self, c: char) -> Result<(), ()> {
+        if self.len < MAX_INPUT {
+            self.buf[self.len] = c;
+            self.len += 1;
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn contains(&self, c: char) -> bool {
+        self.buf[..self.len].contains(&c)
+    }
+}
+
+impl fmt::Display for Input {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for c in &self.buf[0..self.len] {
+            f.write_char(*c)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Console;
+
+impl Console {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    pub fn size() -> usize {
+        core::mem::size_of::<char>()
+    }
+}
+
+impl FileIO for Console {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
+        let mut s = if buf.len() == 4 {
+            read_char().to_string()
+        } else {
+            read_line()
+        };
+        s.truncate(buf.len());
+        let n = s.len();
+        buf[0..n].copy_from_slice(s.as_bytes());
+        Ok(n)
+    }
+
+    fn write(&mut self, buf: &[u8]) -> Result<usize, ()> {
+        let s = String::from_utf8_lossy(buf);
+        let n = s.len();
+        print_fmt(format_args!("{}", s));
+        Ok(n)
+    }
+
+    fn close(&mut self) {}
+
+    fn poll(&mut self, event: IO) -> bool {
+        int::without_interrupts(||
+            match event {
+                IO::Read => STDIN.lock().contains('\n'),
+                IO::Write => true,
+            }
+        )
+    }
+}
+
+pub fn has_cursor() -> bool {
+    cfg!(feature = "video")
+}
+
+pub fn disable_echo() {
+    ECHO.store(false, Ordering::SeqCst);
+}
+
+pub fn enable_echo() {
+    ECHO.store(true, Ordering::SeqCst);
+}
+
+pub fn is_echo_enabled() -> bool {
+    ECHO.load(Ordering::SeqCst)
+}
+
+pub fn disable_raw() {
+    RAW.store(false, Ordering::SeqCst);
+}
+
+pub fn enable_raw() {
+    RAW.store(true, Ordering::SeqCst);
+}
+
+pub fn is_raw_enabled() -> bool {
+    RAW.load(Ordering::SeqCst)
+}
+
+pub fn key_handle(key: char) {
+    let mut stdin = STDIN.lock();
+
+    if key == BS_KEY && !is_raw_enabled() {
+        // Avoid printing more backspaces than chars inserted into STDIN
+        if let Some(c) = stdin.pop_back() {
+            if is_echo_enabled() {
+                let n = match c {
+                    ETX_KEY | EOT_KEY | ESC_KEY => 2,
+                    _ => 1,
+                };
+                for _ in 0..n {
+                    print_fmt(format_args!("{}", BS_KEY));
+                }
+            }
+        }
+    } else {
+        // Reserve the last slot in the buffer for the newline
+        let reserved = (key != '\n') as usize;
+        if stdin.len() + reserved >= stdin.capacity() {
+            return; // Keys are dropped when there is no room for them
+        }
+
+        if stdin.push_back(key).is_ok() && is_echo_enabled() {
+            match key {
+                ETX_KEY => print_fmt(format_args!("^C")),
+                EOT_KEY => print_fmt(format_args!("^D")),
+                ESC_KEY => print_fmt(format_args!("^[")),
+                _ => print_fmt(format_args!("{}", key)),
+            };
+        }
+    }
+}
+
+// TODO: Implement proper signals instead of pushing ETX in STDIN
+pub fn end_of_text() -> bool {
+    int::without_interrupts(|| STDIN.lock().contains(ETX_KEY))
+}
+
+// TODO: Implement proper end-of-file instead of pushing EOT in STDIN
+pub fn end_of_transmission() -> bool {
+    int::without_interrupts(|| STDIN.lock().contains(EOT_KEY))
+}
+
+pub fn drain() {
+    int::without_interrupts(|| STDIN.lock().clear())
+}
+
+pub fn read_char() -> char {
+    sys::console::disable_echo();
+    sys::console::enable_raw();
+    loop {
+        sys::x86::hlt();
+        if let Some(c) = int::without_interrupts(|| STDIN.lock().pop_front()) {
+            sys::console::enable_echo();
+            sys::console::disable_raw();
+            return c;
+        }
+    }
+}
+
+pub fn read_line() -> String {
+    loop {
+        let res = int::without_interrupts(|| {
+            let mut stdin = STDIN.lock();
+            match stdin.back() {
+                Some('\n') => {
+                    let line = stdin.to_string();
+                    stdin.clear();
+                    Some(line)
+                }
+                _ => None,
+            }
+        });
+        if let Some(line) = res {
+            return line;
+        }
+        sys::x86::hlt();
+    }
+}
+
+#[doc(hidden)]
+pub fn print_fmt(args: fmt::Arguments) {
+    if cfg!(feature = "video") {
+        sys::vga::print_fmt(args);
+    } else {
+        sys::serial::print_fmt(args);
+    }
+}
+
+#[test_case]
+fn test_console_with_short_input() {
+    drain();
+    disable_echo();
+    let msg = "Hello, World!\n";
+    for c in msg.chars() {
+        key_handle(c);
+    }
+    enable_echo();
+    assert_eq!(read_line(), msg);
+}
+
+#[test_case]
+fn test_console_with_long_input() {
+    drain();
+    disable_echo();
+    let msg = "h".repeat(MAX_INPUT * 2);
+    for c in msg.chars() {
+        key_handle(c);
+    }
+    key_handle('\n');
+    enable_echo();
+    assert_eq!(STDIN.lock().len(), MAX_INPUT);
+    assert_eq!(STDIN.lock().back(), Some('\n'));
+    assert_eq!(read_line().len(), MAX_INPUT);
+}
+
+#[test_case]
+fn test_console_with_backspace() {
+    drain();
+    disable_echo();
+    for c in "abc".chars() {
+        key_handle(c);
+    }
+    key_handle(BS_KEY);
+    key_handle('\n');
+    enable_echo();
+    assert_eq!(read_line(), "ab\n");
+}

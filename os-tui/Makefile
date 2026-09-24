@@ -1,0 +1,92 @@
+.PHONY: setup image qemu screenshot test clean
+.EXPORT_ALL_VARIABLES:
+
+# ---------------------------------------------------------------------------
+# TUI-OS: kernel + bootloader + built-in ratatui desktop (no userland).
+# ---------------------------------------------------------------------------
+
+setup:
+	rustup toolchain install nightly-2026-03-01 --profile minimal
+	cargo install bootimage
+
+# Compilation options
+output = video          # video, serial
+mode = release
+
+# Emulation options
+arch = x86_64
+cpu = core2duo
+smp = 2
+memory = 32
+kvm = false
+monitor = false
+
+export TUIOS_VERSION = $(shell v=$$(git describe --tags --match 'tuios-*' 2>/dev/null | sed 's/^v//'); echo "$${v:-0.1.0}")
+
+bin = tuios-$(arch).img
+img = disk.img
+
+cargo-opts = --bin tuios
+ifeq ($(mode),release)
+cargo-opts += --release
+endif
+cargo-opts += --no-default-features --features $(output)
+
+$(img):
+	qemu-img create $(img) 32M
+
+# Rebuild TUI-OS if the features list changed
+image: $(img)
+	touch src/lib.rs
+	cargo bootimage $(cargo-opts)
+	cp target/x86_64-tuios/$(mode)/bootimage-tuios.bin $(bin)
+	dd conv=notrunc if=$(bin) of=$(img)
+
+qemu-opts = -name "TUI-OS $$TUIOS_VERSION" \
+			-m $(memory) -smp $(smp) \
+			-drive file=$(img),format=raw
+
+ifeq ($(kvm),true)
+qemu-opts += -cpu host -accel kvm
+else
+qemu-opts += -cpu $(cpu)
+endif
+
+ifeq ($(monitor),true)
+qemu-opts += -monitor telnet:127.0.0.1:7777,server,nowait
+endif
+
+ifeq ($(arch),i686)
+qemu = qemu-system-i386
+cpu = n270
+smp = 1
+else
+qemu = qemu-system-x86_64
+endif
+
+ifeq ($(mode),debug)
+qemu-opts += -s -S
+endif
+
+qemu:
+	$(qemu) $(qemu-opts)
+
+# Dump the current screen to /tmp/tuios.ppm (needs the telnet monitor)
+screenshot:
+	printf 'screendump /tmp/tuios.ppm\nquit\n' | timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/7777; cat >&3; cat <&3' || true
+	convert /tmp/tuios.ppm /tmp/tuios.png
+	echo "Saved /tmp/tuios.png"
+
+test-opts = --lib
+ifeq ($(mode),release)
+test-opts += --release
+endif
+
+test:
+	cargo test $(test-opts) --no-default-features --features serial -- \
+		-m $(memory) -cpu $(cpu) -display none -serial stdio \
+		-device isa-debug-exit,iobase=0xF4,iosize=0x04
+
+clean:
+	cargo clean
+	rm -f tuios-$(arch).img disk.img
