@@ -278,10 +278,8 @@ fn load_segment(
 fn test_load() {
     use alloc::vec;
 
-    let print_bin = include_bytes!("../../../dsk/bin/echo").to_vec();
-    let print_obj = object::File::parse(&print_bin[..]).unwrap();
-    let print_pos = print_obj.entry() as usize;
-
+    // No userland binaries ship with this fork, so only the synthetic magic
+    // buffers below are exercised.
     let bins = vec![
         (vec![], Err(())),
         (vec![b'F'], Err(())),
@@ -289,7 +287,6 @@ fn test_load() {
         (vec![0x7F, b'E', b'L', b'F'], Err(())),
         (vec![0x7F, b'E', b'L', b'F', b'F', b'A', b'I', b'L'], Err(())),
         (vec![0x7F, b'B', b'I', b'N', b'P', b'A', b'S', b'S'], Ok(USER_ADDR)),
-        (print_bin, Ok(print_pos)),
     ];
 
     for (bin, res) in bins.iter() {
