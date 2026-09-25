@@ -40,10 +40,13 @@ impl TryFrom<&[u8]> for Font {
 
 #[test_case]
 fn parse_psf_font() {
-    let buf = include_bytes!("../../dsk/ini/boot.sh");
-    assert!(Font::try_from(&buf[..]).is_err());
+    // A header-only buffer is too short: the parser needs 4 + 256*16 bytes.
+    let header = [0x36, 0x04, 0x00, 0x10];
+    assert!(Font::try_from(&header[..]).is_err());
 
-    let buf = include_bytes!("../../dsk/ini/fonts/zap-light-8x16.psf");
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&header);
+    buf.extend_from_slice(&[0u8; 256 * 16]);
     let font = Font::try_from(&buf[..]).unwrap();
     assert_eq!(font.height, 16);
     assert_eq!(font.size, 256);
