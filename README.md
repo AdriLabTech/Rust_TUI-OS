@@ -26,10 +26,8 @@ solo. **La app Archivos es un andamiaje.** Esto es lo que hay y lo que no:
 | 6. App Archivos de tres paneles | Pendiente. Solo responde a `q` |
 | 7. Sparkline de CPU y verificación integral | Pendiente |
 
-Las 103 pruebas del kernel y las 21 de la herramienta de volcado pasan en
-release y en debug, sin warnings. El plan de
-trabajo completo está en
-[`os-tui/docs/superpowers/plans/2026-09-24-tuios-desktop.md`](os-tui/docs/superpowers/plans/2026-09-24-tuios-desktop.md).
+Las 130 pruebas del kernel y las 24 de la herramienta de volcado pasan en
+release y en debug, sin warnings.
 
 Al encender aterrizas en la terminal, a pantalla completa entre la barra de
 título y la de estado. Las teclas `F1` a `F5` abren una aplicación desde

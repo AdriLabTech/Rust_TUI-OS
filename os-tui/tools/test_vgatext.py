@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Tests for vgatext — the VGA text-buffer reader used to verify TUI-OS screens.
 
-The integration steps of docs/superpowers/plans/2026-09-24-tuios-desktop.md
-depend on reading the 80x25 VGA text buffer back out of a running QEMU so a
-screendump can be asserted on. These tests cover the pure half of that tool:
-decoding the buffer and cleaning the monitor's replies.
+The integration tests depend on reading the 80x25 VGA text buffer back out of a
+running QEMU so a screendump can be asserted on. These tests cover the pure
+half of that tool: decoding the buffer and cleaning the monitor's replies.
 """
 
 import json

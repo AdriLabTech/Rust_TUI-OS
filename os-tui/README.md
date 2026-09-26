@@ -29,10 +29,8 @@ own. **The Files app is a scaffold.**
 | 6. Three-panel Files app | Pending. Only `q` is handled |
 | 7. CPU sparkline and full integration | Pending |
 
-103 kernel tests and 21 tool tests pass in release and in debug, with no
-warnings. The full work
-plan is in
-[`docs/superpowers/plans/2026-09-24-tuios-desktop.md`](docs/superpowers/plans/2026-09-24-tuios-desktop.md).
+130 kernel tests and 24 tool tests pass in release and in debug, with no
+warnings.
 
 Booting lands in the terminal, fullscreen between the title bar and the status
 bar. `F1` through `F5` open an app from anywhere; `Esc` or `F5` close it.

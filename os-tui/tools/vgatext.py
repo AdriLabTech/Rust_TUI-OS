@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Read the VGA 80x25 text buffer out of a running TUI-OS under QEMU.
 
-The integration steps of docs/superpowers/plans/2026-09-24-tuios-desktop.md
-assert on what the desktop actually painted. This asks QEMU's QMP interface to
-``pmemsave`` the raw 4000 bytes at 0xB8000 to a file, then decodes them back
-into text.
+The integration tests assert on what the desktop actually painted. This asks
+QEMU's QMP interface to ``pmemsave`` the raw 4000 bytes at 0xB8000 to a file,
+then decodes them back into text.
 
 QMP rather than the HMP monitor: an HMP socket runs QEMU's readline, which
 echoes every character back interleaved with the reply, so the output cannot be
