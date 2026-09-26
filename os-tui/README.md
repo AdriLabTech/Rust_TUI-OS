@@ -29,12 +29,51 @@ not drawn yet** and the Files app is a scaffold.
 | 6. Three-panel Files app | Pending. Only `q` is handled |
 | 7. CPU sparkline and full integration | Pending |
 
-91 kernel tests pass in release and in debug, with no warnings. The full work
+94 kernel tests pass in release and in debug, with no warnings. The full work
 plan is in
 [`docs/superpowers/plans/2026-09-24-tuios-desktop.md`](docs/superpowers/plans/2026-09-24-tuios-desktop.md).
 
 Booting lands in the terminal, fullscreen between the title bar and the status
 bar. `F1` through `F5` open an app from anywhere; `Esc` or `F5` close it.
+
+## The terminal
+
+This is the centre of the system: a full shell living inside the kernel, with
+the usual key bindings, history and completion, talking to the real filesystem
+rather than a stand-in.
+
+The command names follow the usual Unix conventions, with Spanish aliases.
+
+| Group | Commands |
+| --- | --- |
+| Files | `pwd` `cd` `ls` `cat` `touch` `mkdir` `rm` `mv` `cp` |
+| Apps | `help` `ayuda` `apps` `abrir` `sysinfo` |
+| System | `mem` `uptime` `date` `version` `echo` `clear` `random` `pci` `halt` `apagar` `reboot` `reiniciar` |
+
+`abrir` takes a dock name (`abrir Sistema`) and jumps to that app.
+
+The prompt line has history on `↑` and `↓`, editing with `←`, `→`, `Home` and
+`End`, `Delete` and `Backspace`, and `Tab` completes the command names that
+start with what you have already typed (as long as you have not typed a space).
+
+The file commands are not toys: `cat` reads through the real MFS walk, `cp`
+copies in chunks via `FileIO` so binaries do not get corrupted, and `mv` moves
+within the same disk. `cd` moves the process working directory, `rm` deletes
+files, and `pci` lists the hardware by reading `DeviceConfig` fields.
+
+Nothing panics. Every command that cannot do what it was asked writes a Spanish
+message on the terminal.
+
+### What the shell does not do yet
+
+- **No redirection.** `>` does not exist, so there is no way to put text into a
+  file from the terminal. `touch` makes an empty file and `cp` copies one, but
+  no command writes content. This is the first thing that should come next.
+- **`..` does not work.** MFS resolves a path by walking directory entries and
+  has no `.` or `..` entries, so `cd ..` and `cat ../notes.txt` fail. Relative
+  paths do work: inside `/home`, `mkdir relative` creates `/home/relative`.
+- **`rm` refuses directories.** There is no `rm -r`.
+- **No pipes.** No `|`, no `&&`.
 
 ## Apps
 
@@ -46,28 +85,7 @@ bar. `F1` through `F5` open an app from anywhere; `Esc` or `F5` close it.
 | **Archivos** | Three-panel file manager (parent / current / info+preview) with create, rename, delete, copy, move | Scaffold. Task 6 is missing |
 | **Apagar** | ACPI power down | Works. Also `halt`, `apagar`, `reboot`, `reiniciar` from the terminal |
 
-The UI language is Spanish. Command names follow the usual Unix conventions,
-with Spanish aliases.
-
-| Group | Commands |
-| --- | --- |
-| Files | `pwd` `cd` `ls` `cat` `touch` `mkdir` `rm` `mv` `cp` |
-| Apps | `help` `ayuda` `apps` `abrir` `sysinfo` |
-| System | `mem` `uptime` `date` `version` `echo` `clear` `random` `pci` `halt` `apagar` `reboot` `reiniciar` |
-
-### What the shell does not do yet
-
-- **No redirection.** `>` does not exist, so you cannot put text into a file from
-  the terminal. `touch` makes an empty file and `cp` copies one, but nothing
-  writes content. This is the most visible gap in the command set.
-- **`..` does not work.** MFS resolves a path by walking directory entries and
-  has no `.` or `..` entries, so `cd ..` and `cat ../notes.txt` fail. Relative
-  paths do work: inside `/home`, `mkdir relative` creates `/home/relative`.
-- **`rm` refuses directories.** There is no `rm -r`.
-- **No pipes.** No `|`, no `&&`.
-
-Nothing panics. Every command that cannot do what it was asked writes a Spanish
-message on the terminal.
+The UI language is Spanish.
 
 ## The filesystem
 
@@ -130,17 +148,33 @@ separate commands:
     (monitor) sendkey i
     (monitor) sendkey ret
 
-Key names that work: bare letters and digits, `ret`, `tab`, `backspace`,
-`slash`, `dot`, `minus`, `f1`-`f12`, `up`/`down`/`left`/`right`.
+Key names that work: bare letters and digits, `spc` (the space), `ret`, `tab`,
+`backspace`, `slash`, `dot`, `minus`, `f1`-`f12`, `up`/`down`/`left`/`right`.
 
-**You cannot type a space.** `sendkey space` answers `invalid parameter`, and
-`spc` produces nothing against this kernel. Commands with arguments are
-therefore not verifiable from a screendump; use `make test mode=debug`, which
-covers them.
+**The space is `spc`, not `space`.** `sendkey space` answers `invalid parameter`
+because that is not QEMU's name for it, but `spc` types a space perfectly.
+`make dump KEYS="..."` splits the keys on whitespace, so `spc` is exactly the
+token to write:
+
+    $ make dump KEYS="e c h o spc h o l a ret"
+    ...
+    > echo hola
+    hola
 
 The kernel drains the whole 8042 output buffer inside a single IRQ1 (cap 32
 bytes, iowait between reads), which keeps fast keyboard bursts working on both
 QEMU and real hardware.
+
+### Changing the keyboard layout
+
+The layout is compiled into the kernel, so changing it means rebuilding:
+
+    $ make image keyboard=azerty
+    $ make image keyboard=dvorak
+    $ make image keyboard=qwerty   # the default
+
+A name that is not one of those three stops `make` with an error, instead of
+producing an image whose keyboard does not work.
 
 ## Run on real hardware
 
@@ -151,11 +185,12 @@ is not supported). Write the image to a USB stick and boot it:
 
 `sdX` is your USB device. **Double-check the device name, `dd` will overwrite
 it.** On the machine, enable Legacy/CSM boot and select the USB stick. The
-keyboard is PS/2, `qwerty` layout.
+keyboard is PS/2. The layout is compiled into the image, so a non-qwerty
+build has to be rebuilt with `make image keyboard=azerty`.
 
 ## Development
 
-    $ make test              # release, 91 tests
+    $ make test              # release, 94 tests
     $ make test mode=debug   # debug: enables debug_assert, which catches more
 
 Both forms build and boot the real image in QEMU. Run the debug one too: several
