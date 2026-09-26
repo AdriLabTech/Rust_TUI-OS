@@ -105,7 +105,12 @@ qmp-pid = /tmp/tuios-qmp.pid
 # `Terminado` and exits 2 after a dump that was perfectly fine -- a failure with
 # no cause behind it. Two rules, then: record the pid, and let vgatext's exit
 # status be make's, so a dump that really did fail fails the build too.
-dump:
+#
+# This target boots its own QEMU, so it depends on `image` to rebuild the
+# binary first. Without that dependency it reads back whatever bootimage was
+# last dd'd into the disk, which is the worst way for a screen-reading tool to
+# fail: it reports a screen state that the current source never produced.
+dump: image
 	rm -f $(qmp-sock) $(qmp-pid)
 	$(qemu) $(qemu-opts) -qmp unix:$(qmp-sock),server,nowait -display none & echo $$! > $(qmp-pid)
 	sleep $(bootwait)
