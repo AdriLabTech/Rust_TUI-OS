@@ -51,11 +51,16 @@ Los nombres siguen las convenciones habituales de Unix, con alias en español.
 
 | Categoría | Comandos |
 | --- | --- |
-| Ficheros | `pwd` `cd` `ls` `cat` `touch` `mkdir` `rm` `mv` `cp` |
+| Ficheros | `pwd` `cd` `ls` `cat` `touch` `write` `mkdir` `rm` `mv` `cp` |
 | Aplicaciones | `help` `ayuda` `apps` `abrir` `sysinfo` |
 | Sistema | `mem` `uptime` `date` `version` `echo` `clear` `random` `pci` `halt` `apagar` `reboot` `reiniciar` |
 
 `abrir` acepta el nombre del dock (`abrir Sistema`) y salta a esa aplicación.
+
+`write` toma como texto todo lo que venga detrás del nombre del fichero, así que
+los espacios no necesitan comillas: `write /nota.txt hola mundo`. Sobrescribe el
+fichero, igual que haría `>`, y avisa en español si el destino es un directorio o
+si no se puede escribir.
 
 En la línea de comandos tienes historial con `↑` y `↓`, edición con `←`, `→`,
 `Inicio` y `Fin`, `Supr` y `Retroceso`, y `Tab` completa los nombres de comando
@@ -64,17 +69,17 @@ que empiezan por lo que ya has escrito (mientras no hayas puesto un espacio).
 Los comandos de ficheros no son de juguete: `cat` lee con el recorrido real de
 MFS, `cp` copia en trozos a través de `FileIO` para no corromper binarios, y
 `mv` mueve dentro del mismo disco. `cd` mueve el directorio de trabajo del
-proceso, `rm` borra ficheros, y `pci` lista el hardware leyendo los campos de
-`DeviceConfig`.
+proceso, `rm` borra ficheros, `ls` ordena por nombre en lugar de por orden de
+guardado, y `pci` lista el hardware leyendo los campos de `DeviceConfig`.
 
 Un fallo nunca entra en pánico: cada comando que no puede hacer lo que le piden
 escribe un mensaje en español en el terminal.
 
 ### Lo que el shell todavía no hace
 
-- **No hay redirección.** `>` no existe, así que no hay forma de meter texto en
-  un fichero desde la terminal. `touch` crea el fichero vacío y `cp` copia, pero
-  no hay comando que escriba contenido. Es lo primero que debería venir.
+- **No hay redirección.** `>` no existe, pero `write <fichero> <texto>` cubre el
+  caso: escribe el texto y sobrescribe. Lo que sigue sin poder escribirse es una
+  redirección de verdad, porque no hay canalización.
 - **`..` no funciona.** MFS resuelve una ruta recorriendo entradas de
   directorio, y no tiene entradas `.` ni `..`, así que `cd ..` y
   `cat ../notas.txt` fallan. Las rutas relativas sí: dentro de `/home`,
@@ -113,7 +118,7 @@ un dock y aplicaciones a pantalla completa.
 
 | App | Qué hace | Estado |
 | --- | --- | --- |
-| **Terminal** | Shell dentro del kernel con 26 comandos | Funciona |
+| **Terminal** | Shell dentro del kernel con 27 comandos | Funciona |
 | **Sistema** | CPU y RAM en vivo, con medidor de memoria | Funciona. La sparkline de actividad es la Tarea 7 |
 | **Ayuda** | Lista de comandos, atajos y aplicaciones del dock | Funciona |
 | **Archivos** | Administrador de tres paneles (padre / actual / info y vista previa) con crear, renombrar, borrar, copiar y mover | Andamiaje. Falta la Tarea 6 |
@@ -191,7 +196,9 @@ Nombres de tecla que funcionan: letras y dígitos sueltos, `spc` (el espacio),
 `up`/`down`/`left`/`right`.
 
 Dos nombres que **no** existen y devuelven `invalid parameter`: `space`
-(es `spc`) y `escape` (es `esc`).
+(es `spc`) y `escape` (es `esc`). `make dump` aborta con código 2 y lo dice en
+la última línea, en vez de teclear en silencio y dejar un volcado que parece
+correcto.
 
 **El espacio se llama `spc`, no `space`.** `sendkey space` responde `invalid
 parameter` porque ese no es el nombre de QEMU, pero `spc` teclea un espacio

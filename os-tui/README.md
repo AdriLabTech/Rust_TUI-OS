@@ -51,11 +51,15 @@ The command names follow the usual Unix conventions, with Spanish aliases.
 
 | Group | Commands |
 | --- | --- |
-| Files | `pwd` `cd` `ls` `cat` `touch` `mkdir` `rm` `mv` `cp` |
+| Files | `pwd` `cd` `ls` `cat` `touch` `write` `mkdir` `rm` `mv` `cp` |
 | Apps | `help` `ayuda` `apps` `abrir` `sysinfo` |
 | System | `mem` `uptime` `date` `version` `echo` `clear` `random` `pci` `halt` `apagar` `reboot` `reiniciar` |
 
 `abrir` takes a dock name (`abrir Sistema`) and jumps to that app.
+
+`write` takes everything after the file name as the text, so spaces need no
+quoting: `write /nota.txt hola mundo`. It overwrites, the way `>` would, and says
+in Spanish when the target is a directory or cannot be written.
 
 The prompt line has history on `↑` and `↓`, editing with `←`, `→`, `Home` and
 `End`, `Delete` and `Backspace`, and `Tab` completes the command names that
@@ -64,16 +68,17 @@ start with what you have already typed (as long as you have not typed a space).
 The file commands are not toys: `cat` reads through the real MFS walk, `cp`
 copies in chunks via `FileIO` so binaries do not get corrupted, and `mv` moves
 within the same disk. `cd` moves the process working directory, `rm` deletes
-files, and `pci` lists the hardware by reading `DeviceConfig` fields.
+files, `ls` sorts by name instead of by storage order, and `pci` lists the
+hardware by reading `DeviceConfig` fields.
 
 Nothing panics. Every command that cannot do what it was asked writes a Spanish
 message on the terminal.
 
 ### What the shell does not do yet
 
-- **No redirection.** `>` does not exist, so there is no way to put text into a
-  file from the terminal. `touch` makes an empty file and `cp` copies one, but
-  no command writes content. This is the first thing that should come next.
+- **No redirection.** `>` does not exist, but `write <file> <text>` covers the
+  case: it writes the text and overwrites. What is still impossible is real
+  redirection, because there are no pipes.
 - **`..` does not work.** MFS resolves a path by walking directory entries and
   has no `.` or `..` entries, so `cd ..` and `cat ../notes.txt` fail. Relative
   paths do work: inside `/home`, `mkdir relative` creates `/home/relative`.
@@ -84,7 +89,7 @@ message on the terminal.
 
 | App | What it does | State |
 | --- | --- | --- |
-| **Terminal** | In-kernel shell with 26 commands | Works |
+| **Terminal** | In-kernel shell with 27 commands | Works |
 | **Sistema** | Live CPU/RAM with a memory gauge | Works. The activity sparkline is Task 7 |
 | **Ayuda** | Command list, key bindings, dock apps | Works |
 | **Archivos** | Three-panel file manager (parent / current / info+preview) with create, rename, delete, copy, move | Scaffold. Task 6 is missing |
@@ -158,7 +163,8 @@ Key names that work: bare letters and digits, `spc` (the space), `ret`, `tab`,
 `up`/`down`/`left`/`right`.
 
 Two names that **do not** exist and answer `invalid parameter`: `space` (it is
-`spc`) and `escape` (it is `esc`).
+`spc`) and `escape` (it is `esc`). `make dump` exits 2 and says so on the last
+line, instead of typing nothing and leaving a dump that looks fine.
 
 **The space is `spc`, not `space`.** `sendkey space` answers `invalid parameter`
 because that is not QEMU's name for it, but `spc` types a space perfectly.
