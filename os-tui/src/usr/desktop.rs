@@ -1,10 +1,9 @@
 //! The desktop: wallpaper, dock, and the fullscreen app switcher.
 //!
-//! The desktop owns the screen. It draws the title bar, the hint bar and the
+//! The desktop owns the screen. It draws the title bar, the dock and the
 //! status bar, decides whether a key belongs to the dock or to the open app,
 //! and runs exactly one fullscreen app at a time.
 
-use crate::api;
 use crate::sys;
 use crate::usr::apps::files::FilesApp;
 use crate::usr::apps::help::HelpApp;
@@ -12,7 +11,7 @@ use crate::usr::apps::sysinfo::SysInfoApp;
 use crate::usr::apps::terminal::TerminalApp;
 use crate::usr::apps::{AppAction, AppKind, APPS};
 use crate::usr::tui::VgaBackend;
-use crate::usr::util::{format_uptime, version};
+use crate::usr::util::{format_size, format_uptime, version};
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -32,6 +31,56 @@ const SHUTDOWN_INDEX: usize = APPS.len();
 
 /// How many entries the dock has, apps plus shutdown.
 const DOCK_LEN: usize = APPS.len() + 1;
+
+/// One cell of the dock row.
+///
+/// `text` already carries the selection marker, so the renderer and the tests
+/// read the same string instead of each rebuilding the marker and drifting.
+///
+/// `index` is the navigation index the cell launches, and `None` for the `░`
+/// rule, which is drawn but cannot be selected. Navigation indices and cell
+/// positions are therefore *not* the same number: the rule takes a cell of its
+/// own, so the entry that `SHUTDOWN_INDEX` names is the last cell rather than
+/// the one sitting at that position. Comparing an index against a cell position
+/// puts the marker on the rule.
+struct DockCell {
+    text: String,
+    index: Option<usize>,
+    selected: bool,
+}
+
+/// The dock row's cells in display order: the apps, the `░` rule, then the
+/// shutdown entry.
+fn dock_cells(selected: usize) -> Vec<DockCell> {
+    let mut cells: Vec<DockCell> = APPS
+        .iter()
+        .enumerate()
+        .map(|(index, (_, label, _))| DockCell {
+            text: dock_entry_text(label, index == selected),
+            index: Some(index),
+            selected: index == selected,
+        })
+        .collect();
+    cells.push(DockCell {
+        text: "░".to_string(),
+        index: None,
+        selected: false,
+    });
+    cells.push(DockCell {
+        text: dock_entry_text("Apagar", selected == SHUTDOWN_INDEX),
+        index: Some(SHUTDOWN_INDEX),
+        selected: selected == SHUTDOWN_INDEX,
+    });
+    cells
+}
+
+/// One entry's text, marker included: `▸ Terminal` when it is the selection and
+/// `  Terminal` when it is not. The marker is one column either way, so the
+/// labels stay in a straight line down the dock instead of shifting by one
+/// every time the highlight moves.
+fn dock_entry_text(label: &str, selected: bool) -> String {
+    format!("{} {}", if selected { '▸' } else { ' ' }, label)
+}
 
 /// What the desktop should do with a key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,11 +284,15 @@ impl Desktop {
 
     fn render(&mut self, frame: &mut Frame<'_>) {
         let area = frame.area();
+        // The spec puts the dock on row 23 and the status on row 24, leaving
+        // rows 1..=22 for the wallpaper or the open app. There is no hint row
+        // at this level: the dock is the affordance, and each app carries its
+        // own key hints inside its own area.
         let chunks = Layout::vertical([
-            Constraint::Length(1), // title bar
-            Constraint::Min(1),    // the open app, or the wallpaper
-            Constraint::Length(1), // hint bar
-            Constraint::Length(1), // status bar
+            Constraint::Length(1), // row 0  title bar
+            Constraint::Min(1),    // rows 1..=22 the open app, or the wallpaper
+            Constraint::Length(1), // row 23 dock
+            Constraint::Length(1), // row 24 status bar
         ])
         .split(area);
 
@@ -251,12 +304,40 @@ impl Desktop {
             Some(AppKind::Help) => self.help.render(frame, chunks[1]),
             None => render_wallpaper(frame, chunks[1]),
         }
-        self.render_hint(frame, chunks[2]);
+        self.render_dock(frame, chunks[2]);
         self.render_status(frame, chunks[3]);
     }
 
+    fn render_dock(&self, frame: &mut Frame<'_>, area: Rect) {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        for (position, cell) in dock_cells(self.dock_index).iter().enumerate() {
+            if position > 0 {
+                spans.push(Span::raw("  "));
+            }
+            let style = match (cell.index, cell.selected) {
+                (_, true) => Style::new()
+                    .bg(Color::LightCyan)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+                // The rule is not an entry, so it stays dim.
+                (None, false) => Style::new().fg(Color::DarkGray),
+                // VGA index 7 is ratatui's `Gray`; there is no `LightGray`.
+                _ => Style::new().bg(Color::Black).fg(Color::Gray),
+            };
+            spans.push(Span::styled(cell.text.clone(), style));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).style(Style::new().bg(Color::Black)),
+            area,
+        );
+    }
+
     fn render_title(&self, frame: &mut Frame<'_>, area: Rect) {
-        let left = format!(" TUI-OS v{} ", version());
+        let place = match self.app {
+            Some(kind) => kind.label(),
+            None => "Escritorio",
+        };
+        let left = format!(" ‹ {} ", place);
         let right = format!(" {} ", sys::clk::date());
         let width = area.width as usize;
         let gap = width.saturating_sub(left.len() + right.len());
@@ -274,33 +355,11 @@ impl Desktop {
         frame.render_widget(Paragraph::new(line).style(Style::new().bg(Color::Blue)), area);
     }
 
-    fn render_hint(&self, frame: &mut Frame<'_>, area: Rect) {
-        // Only glyphs that `tui::char_to_cp437` actually maps may appear here:
-        // it has the triangles but not ← → ↑ ↓, and an unmapped glyph is drawn
-        // as a blank cell, which silently eats the arrow out of the hint.
-        let text: String = match self.app {
-            None => {
-                let what = if self.dock_index == SHUTDOWN_INDEX {
-                    "Apagar el equipo"
-                } else {
-                    APPS[self.dock_index].2
-                };
-                format!(" ◀/▶ elegir   Enter abrir   {}", what)
-            }
-            Some(_) => {
-                " F1 Ayuda  F2 Sistema  F3 Terminal  F4 Archivos  F5/Esc Escritorio".to_string()
-            }
-        };
-        let paragraph = Paragraph::new(Line::styled(text, Style::new().fg(Color::DarkGray)));
-        frame.render_widget(paragraph, area);
-    }
-
     fn render_status(&self, frame: &mut Frame<'_>, area: Rect) {
-        let unit = api::unit::SizeUnit::Binary;
         let left = format!(
             " MEM {} / {} ",
-            unit.format(sys::mem::memory_used()),
-            unit.format(sys::mem::memory_size())
+            format_size(sys::mem::memory_used()),
+            format_size(sys::mem::memory_size())
         );
         let right = format!(
             " TIEMPO {}   {} ",
@@ -354,6 +413,22 @@ fn render_wallpaper(frame: &mut Frame<'_>, area: Rect) {
         Style::new().fg(Color::DarkGray),
     ));
 
+    // The dock is the affordance and it sits on its own row below, so the
+    // wallpaper is where the keys that drive it get explained. `◀` and `▶` are
+    // the triangles `char_to_cp437` actually maps; the Unicode arrows would
+    // come out as blank cells and take the word out of the line.
+    lines.push(Line::raw(""));
+    for hint in [
+        "◀/▶ elige   Intro abre   Esc vuelve",
+        "F1 Ayuda  F2 Sistema  F3 Terminal  F4 Archivos",
+    ] {
+        let pad = (area.width as usize).saturating_sub(hint.chars().count()) / 2;
+        lines.push(Line::styled(
+            format!("{}{}", " ".repeat(pad), hint),
+            Style::new().fg(Color::DarkGray),
+        ));
+    }
+
     let block = Block::new()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -403,8 +478,112 @@ pub fn main() -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{as_route_code, route_key, AppKind, DesktopCmd};
+    use super::{
+        as_route_code, dock_cells, route_key, AppKind, DesktopCmd, APPS, DOCK_LEN,
+        SHUTDOWN_INDEX,
+    };
+    use alloc::format;
+    use alloc::string::String;
+    use alloc::vec::Vec;
     use pc_keyboard::{DecodedKey, KeyCode};
+
+    /// The row exactly as `render_dock` lays it out: the cells joined by the
+    /// two-column gap, so this measures the real width and the real marker
+    /// rather than a parallel copy of them.
+    fn dock_row(selected: usize) -> String {
+        let cells = dock_cells(selected);
+        let parts: Vec<&str> = cells.iter().map(|cell| cell.text.as_str()).collect();
+        parts.join("  ")
+    }
+
+    /// The dock row is 80 columns wide, so the budget has to hold for every
+    /// selection, not only the first.
+    #[test_case]
+    fn dock_row_marks_one_selection_and_fits_eighty_columns() {
+        for selected in 0..DOCK_LEN {
+            let row = dock_row(selected);
+            assert!(
+                row.chars().count() < 80,
+                "row is {} columns at index {}: {}",
+                row.chars().count(),
+                selected,
+                row
+            );
+            assert_eq!(
+                row.matches('▸').count(),
+                1,
+                "index {} should mark exactly one entry: {}",
+                selected,
+                row
+            );
+            assert!(row.contains("Apagar"), "shutdown entry missing: {}", row);
+        }
+    }
+
+    #[test_case]
+    fn dock_row_marker_follows_the_navigation_index() {
+        assert!(dock_row(0).contains("▸ Archivos"));
+        assert!(dock_row(2).contains("▸ Sistema"));
+        assert!(!dock_row(0).contains("▸ Terminal"));
+        assert!(!dock_row(0).contains("▸ Ayuda"));
+    }
+
+    /// `SHUTDOWN_INDEX` is a navigation index and the `░` rule takes a cell of
+    /// its own, so the shutdown entry that navigation calls index 4 is the
+    /// *last* cell. Comparing the index against the cell position instead
+    /// would put the marker on the rule.
+    #[test_case]
+    fn dock_row_marks_apagar_at_the_shutdown_index() {
+        assert!(dock_row(SHUTDOWN_INDEX).contains("▸ Apagar"));
+        assert!(!dock_row(APPS.len() - 1).contains("▸ Apagar"));
+        assert!(!dock_row(SHUTDOWN_INDEX).contains("▸ ░"));
+    }
+
+    /// Every navigation index the router can produce has to land on a real
+    /// entry, or the highlight vanishes on some arrow press.
+    #[test_case]
+    fn every_navigation_index_lands_on_an_entry() {
+        for index in 0..DOCK_LEN {
+            let row = dock_row(index);
+            assert!(
+                APPS
+                    .iter()
+                    .any(|(_, label, _)| row.contains(&format!("▸ {}", label)))
+                    || row.contains("▸ Apagar"),
+                "navigation index {} marks nothing: {}",
+                index,
+                row
+            );
+        }
+    }
+
+    /// The rule is drawn but must never take the highlight, whatever the index.
+    #[test_case]
+    fn the_rule_cell_is_never_selectable() {
+        for selected in 0..DOCK_LEN {
+            let cells = dock_cells(selected);
+            let rule = &cells[APPS.len()];
+            assert_eq!(rule.index, None);
+            assert!(!rule.selected, "the rule was selectable at index {}", selected);
+        }
+    }
+
+    /// The labels have to stay in a straight line, which only holds if the
+    /// marker is one column wide whether it is there or not.
+    #[test_case]
+    fn every_entry_text_is_the_same_width_selected_or_not() {
+        for (index, (_, label, _)) in APPS.iter().enumerate() {
+            let marked = super::dock_entry_text(label, true);
+            let unmarked = super::dock_entry_text(label, false);
+            assert_eq!(
+                marked.chars().count(),
+                unmarked.chars().count(),
+                "{} shifts the dock when highlighted",
+                label
+            );
+            let _ = index;
+        }
+    }
 
     #[test_case]
     fn enter_and_escape_arrive_as_control_characters() {

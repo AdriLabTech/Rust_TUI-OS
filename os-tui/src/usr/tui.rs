@@ -120,6 +120,13 @@ pub fn char_to_cp437(c: char) -> u8 {
         '▼' => 0x1F,
         '◀' | '◄' => 0x11,
         '▶' | '►' => 0x10,
+        // The dock's selection marker and the title bar's breadcrumb. CP437
+        // carries neither a small triangle nor an angle quote, so both borrow
+        // the big triangle. Unmapped they draw as blank cells, and a blank
+        // where the marker belongs makes the dock look like it has no
+        // selection at all.
+        '▸' => 0x10,
+        '‹' => 0x11,
         // Prompts and bullets
         '❯' | '»' => 0xAF,
         '•' | '●' => 0x07,
@@ -331,6 +338,17 @@ fn test_char_to_cp437_arrows() {
     assert_eq!(char_to_cp437('→'), 0);
     assert_eq!(char_to_cp437('↑'), 0);
     assert_eq!(char_to_cp437('↓'), 0);
+}
+
+#[test_case]
+fn test_char_to_cp437_dock_glyphs() {
+    // The dock marks the selected entry with `▸` and the title bar opens with
+    // `‹`. CP437 has neither a small triangle nor a single angle quote, so both
+    // have to land on the big triangle it does carry. Left unmapped they draw
+    // as blank cells, and a blank cell where the selection marker should be
+    // makes the dock look like it has no selection at all.
+    assert_eq!(char_to_cp437('▸'), 0x10);
+    assert_eq!(char_to_cp437('‹'), 0x11);
 }
 
 #[test_case]

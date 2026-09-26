@@ -605,9 +605,26 @@ impl TerminalApp {
 
     /// Draw the log and the input line into the area the desktop hands us.
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
-        let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
+        // The desktop has no hint row of its own, so the app states its own
+        // keys. Only glyphs `tui::char_to_cp437` maps may appear: an unmapped
+        // one draws as a blank cell and quietly deletes a word.
+        let chunks = Layout::vertical([
+            Constraint::Min(1),    // the log
+            Constraint::Length(1), // key hints
+            Constraint::Length(3), // the input box
+        ])
+        .split(area);
         self.render_log(frame, chunks[0]);
-        self.render_input(frame, chunks[1]);
+        self.render_hint(frame, chunks[1]);
+        self.render_input(frame, chunks[2]);
+    }
+
+    fn render_hint(&self, frame: &mut Frame<'_>, area: Rect) {
+        let text = "Tab completa   Intro ejecuta   Esc vuelve al escritorio";
+        frame.render_widget(
+            Paragraph::new(Line::styled(text, Style::new().fg(Color::DarkGray))),
+            area,
+        );
     }
 
     fn render_log(&self, frame: &mut Frame<'_>, area: Rect) {

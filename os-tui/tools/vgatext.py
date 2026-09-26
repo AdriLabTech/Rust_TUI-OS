@@ -71,6 +71,32 @@ def hmp_sendkey(key):
     return f"sendkey {key}"
 
 
+# CP437's low range holds glyphs, not controls: the triangles, the arrows and
+# the card suits. Python's `cp437` codec disagrees, treating 0x00-0x1F as C0
+# control characters in both directions, so it can neither encode nor decode
+# them. The dock's selection marker (0x10) and the title bar's breadcrumb
+# (0x11) are in that range, and decoding them as controls renders them as
+# invisible characters, which makes a correct kernel look broken. Hence this
+# table, applied before the codec sees the row.
+#
+# Index 0 is the null cell, which has no glyph and is drawn blank. Getting the
+# count wrong shifts every entry after the gap, so `test_vgatext` pins both the
+# length and each cell.
+CP437_LOW_RANGE = (
+    " ☺☻♥♦♣♠•"  # 0x00-0x07
+    "◘○◙♂♀♪♫☼"  # 0x08-0x0F
+    "►◄↕‼¶§▬↨"  # 0x10-0x17
+    "↑↓→←∟↔▲▼"  # 0x18-0x1F
+)
+
+
+def decode_cell(byte: int) -> str:
+    """One character byte from the text buffer, as a character."""
+    if byte < 0x20:
+        return CP437_LOW_RANGE[byte]
+    return bytes([byte]).decode("cp437", "replace")
+
+
 def decode_screen(data, cols=COLS, rows=ROWS):
     """Decode a raw VGA text buffer into `rows` strings, trailing spaces cut."""
     if len(data) % 2:
@@ -82,7 +108,7 @@ def decode_screen(data, cols=COLS, rows=ROWS):
     for row in range(rows):
         start = row * cols * 2
         chars = data[start : start + cols * 2 : 2]
-        lines.append(bytes(chars).decode("cp437", "replace").rstrip())
+        lines.append("".join(decode_cell(b) for b in chars).rstrip())
     return lines
 
 

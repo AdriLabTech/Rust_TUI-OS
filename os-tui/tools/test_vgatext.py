@@ -30,6 +30,21 @@ def screen(rows, cols=80, attr=0x07):
     return bytes(buf)
 
 
+def raw_row(values, cols=80, attr=0x07):
+    """Build a buffer from raw character bytes.
+
+    Needed for CP437's low range, which Python's codec cannot encode: asking it
+    for '►' raises, because it treats 0x00-0x1F as C0 controls rather than
+    glyphs. So the bytes have to be written literally.
+    """
+    buf = bytearray()
+    for value in values:
+        buf += cell(value, attr)
+    while len(buf) < cols * 25 * 2:
+        buf += cell(0x20, attr)
+    return bytes(buf)
+
+
 class DecodeScreen(unittest.TestCase):
     def test_reads_ascii_cells(self):
         data = screen(["Hola", "Adios"])
@@ -62,6 +77,46 @@ class DecodeScreen(unittest.TestCase):
         # A truncated dump must fail loudly, not silently drop a byte.
         with self.assertRaises(ValueError):
             vgatext.decode_screen(b"\x00\x07\x41")
+
+
+class DecodeScreenLowRange(unittest.TestCase):
+    """CP437 keeps its triangles and arrows in 0x00-0x1F, and Python's `cp437`
+    codec decodes that range as C0 control characters rather than as glyphs.
+
+    The dock's selection marker (0x10) and the title bar's breadcrumb (0x11)
+    sit exactly there, so without a table of our own every screendump of the
+    dock shows it with no marker at all, and the bug reads as a kernel fault
+    rather than as a blind spot in this tool.
+    """
+
+    def test_decodes_the_triangles(self):
+        data = raw_row([0x10, 0x20, 0x11, 0x20, 0x1E, 0x20, 0x1F])
+        self.assertEqual(vgatext.decode_screen(data)[0], "► ◄ ▲ ▼")
+
+    def test_decodes_the_dock_row_as_drawn(self):
+        # The row the desktop actually paints, marker first, label after.
+        cells = [0x10, 0x20] + [ord(c) for c in "Terminal"]
+        data = raw_row(cells)
+        self.assertEqual(vgatext.decode_screen(data)[0], "► Terminal")
+
+    def test_decodes_the_whole_low_range(self):
+        # Pinned cell by cell so an entry cannot be dropped from the table
+        # without a test noticing. A missing entry shifts every glyph after the
+        # gap by one, which silently puts the dock marker on the wrong cell.
+        expected = (
+            " ☺☻♥♦♣♠•"  # 0x00-0x07
+            "◘○◙♂♀♪♫☼"  # 0x08-0x0F
+            "►◄↕‼¶§▬↨"  # 0x10-0x17
+            "↑↓→←∟↔▲▼"  # 0x18-0x1F
+        )
+        self.assertEqual(len(vgatext.CP437_LOW_RANGE), 32)
+        data = raw_row(list(range(0x00, 0x20)))
+        self.assertEqual(vgatext.decode_screen(data)[0], expected.rstrip())
+
+    def test_ordinary_text_is_untouched(self):
+        # The override must not leak into the rest of the buffer.
+        data = screen(["Hola █░"])
+        self.assertEqual(vgatext.decode_screen(data)[0], "Hola █░")
 
 
 class AttrMap(unittest.TestCase):
