@@ -5,5 +5,8 @@
 //! replaces the whole userland with a built-in desktop that renders its
 //! windows with [`ratatui`] directly into the VGA text buffer.
 
+pub mod apps;
+pub mod desktop;
 pub mod shell;
 pub mod tui;
+pub mod util;

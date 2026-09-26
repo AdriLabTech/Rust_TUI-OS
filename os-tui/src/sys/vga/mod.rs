@@ -36,11 +36,14 @@ const CRTC_DATA_REG:           u16 = 0x3D5;
 const INPUT_STATUS_REG:        u16 = 0x3DA;
 const INSTAT_READ_REG:         u16 = 0x3DA;
 
-// ASCII Printable
-// Backspace
-// New Line
-// Carriage Return
-// Extended ASCII Printable
+// Whether a typed byte is a printable character rather than a control code:
+// ASCII printable, plus backspace, newline and carriage return, plus the
+// extended range.
+//
+// This is for filtering *keyboard input* (`api::console`, `api::prompt`).
+// It is deliberately not for deciding what the text-mode framebuffer can
+// display: in CP437 every byte from 0x00 to 0xFF is a glyph, so applying this
+// to a write blanks the arrows and bullets that live below 0x20.
 pub fn is_printable(c: u8) -> bool {
     matches!(c, 0x20..=0x7E | 0x08 | 0x0A | 0x0D | 0x80..=0xFF)
 }

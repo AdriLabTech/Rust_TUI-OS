@@ -53,6 +53,9 @@ pub fn heap_size() -> usize {
     ALLOCATOR.lock().size()
 }
 
+// Only reached on targets without a bitmap frame allocator, where
+// `mem::memory_used()` cannot count committed frames and falls back to this.
+#[allow(dead_code)]
 pub fn heap_used() -> usize {
     ALLOCATOR.lock().used()
 }

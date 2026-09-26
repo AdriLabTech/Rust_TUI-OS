@@ -125,6 +125,49 @@ pub fn char_to_cp437(c: char) -> u8 {
         '•' | '●' => 0x07,
         '·' => 0xFA,
         '…' => 0x2E,
+        // The Latin-1 letters CP437 carries. The interface is in Spanish, so
+        // these are load-bearing rather than decorative: an unmapped letter is
+        // written as a blank cell, which reads as a typo instead of as a
+        // missing glyph ("Información" came out as "Informaci n").
+        //
+        // CP437 has no uppercase accented letters and no inverted question or
+        // exclamation marks, so `Á`, `Ó`, `¿` and `¡` cannot be drawn at all
+        // and must be kept out of UI strings. Accents belong inside words.
+        'Ç' => 0x80,
+        'ü' => 0x81,
+        'é' => 0x82,
+        'â' => 0x83,
+        'ä' => 0x84,
+        'à' => 0x85,
+        'å' => 0x86,
+        'ç' => 0x87,
+        'ê' => 0x88,
+        'ë' => 0x89,
+        'è' => 0x8A,
+        'ï' => 0x8B,
+        'î' => 0x8C,
+        'ì' => 0x8D,
+        'Ä' => 0x8E,
+        'Å' => 0x8F,
+        'É' => 0x90,
+        'æ' => 0x91,
+        'Æ' => 0x92,
+        'ô' => 0x93,
+        'ö' => 0x94,
+        'ò' => 0x95,
+        'û' => 0x96,
+        'ù' => 0x97,
+        'ÿ' => 0x98,
+        'Ö' => 0x99,
+        'Ü' => 0x9A,
+        'á' => 0xA0,
+        'í' => 0xA1,
+        'ó' => 0xA2,
+        'ú' => 0xA3,
+        'ñ' => 0xA4,
+        'Ñ' => 0xA5,
+        'ß' => 0xE1,
+        '°' => 0xF8,
         // Everything else that CP437 shares with ASCII
         c if c.is_ascii() => c as u8,
         _ => 0x00,
@@ -244,6 +287,50 @@ fn test_char_to_cp437_box() {
     assert_eq!(char_to_cp437('│'), 0xB3);
     assert_eq!(char_to_cp437('█'), 0xDB);
     assert_eq!(char_to_cp437('❯'), 0xAF);
+}
+
+#[test_case]
+fn test_char_to_cp437_spanish() {
+    // The interface is in Spanish, so these letters are load-bearing. CP437
+    // carries every one of them; without the mapping each accented letter is
+    // drawn as a blank cell, and "Información" reads as "Informaci n".
+    assert_eq!(char_to_cp437('á'), 0xA0);
+    assert_eq!(char_to_cp437('é'), 0x82);
+    assert_eq!(char_to_cp437('í'), 0xA1);
+    assert_eq!(char_to_cp437('ó'), 0xA2);
+    assert_eq!(char_to_cp437('ú'), 0xA3);
+    assert_eq!(char_to_cp437('ü'), 0x81);
+    assert_eq!(char_to_cp437('ñ'), 0xA4);
+    assert_eq!(char_to_cp437('Ñ'), 0xA5);
+    assert_eq!(char_to_cp437('ç'), 0x87);
+    assert_eq!(char_to_cp437('°'), 0xF8);
+
+    // CP437 has no uppercase accented letters, so those cannot be drawn at
+    // all and must never appear in a UI string. This asserts the limitation
+    // is real, so nobody "fixes" a mangled word by reaching for `Á`.
+    assert_eq!(char_to_cp437('Á'), 0);
+    assert_eq!(char_to_cp437('Ó'), 0);
+    assert_eq!(char_to_cp437('¿'), 0);
+    assert_eq!(char_to_cp437('¡'), 0);
+}
+
+#[test_case]
+fn test_char_to_cp437_arrows() {
+    // The triangles are the arrows the UI can actually draw. They must never
+    // fall through to the blank fallback, because the desktop hint bar uses
+    // them and a blank cell there silently deletes the arrow from the text.
+    assert_eq!(char_to_cp437('◀'), 0x11);
+    assert_eq!(char_to_cp437('▶'), 0x10);
+    assert_eq!(char_to_cp437('▲'), 0x1E);
+    assert_eq!(char_to_cp437('▼'), 0x1F);
+
+    // The Unicode arrows are deliberately unmapped: CP437 does draw them, at
+    // 0x18-0x1B, but this table does not, so they render as blanks. Use the
+    // triangles instead.
+    assert_eq!(char_to_cp437('←'), 0);
+    assert_eq!(char_to_cp437('→'), 0);
+    assert_eq!(char_to_cp437('↑'), 0);
+    assert_eq!(char_to_cp437('↓'), 0);
 }
 
 #[test_case]
