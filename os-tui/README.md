@@ -2,9 +2,9 @@
 
 TUI-OS is a self-contained operating system in which **everything lives in the
 kernel crate**: there is no userspace. It boots a PS/2 keyboard, the RTC clock,
-a serial port, and a **TUI desktop** that renders **ratatui 0.30 windows
-directly into the VGA 80×25 text buffer** (`0xB8000`) through a custom
-`VgaBackend`.
+a serial port, and a **TUI desktop** that renders **ratatui 0.30 widgets
+directly into the VGA 80x25 text buffer** (`0xB8000`) through a custom
+`VgaBackend`. There are no windows: there is a dock and fullscreen apps.
 
 ```
  _____ _   _ ___       ___  ____
@@ -14,22 +14,77 @@ directly into the VGA 80×25 text buffer** (`0xB8000`) through a custom
   |_|  \___/|___|     \___/|____/
 ```
 
-## What is the desktop
+## Project status
 
-On boot you land on the **desktop**: a dock at the bottom lets you launch apps
-fullscreen
+The desktop boots, dispatches apps, and seeds the disk on its own. **The dock is
+not drawn yet** and the Files app is a scaffold.
 
-| App | What it does |
+| Task | State |
 | --- | --- |
-| **Archivos** | Three-panel file manager (parent / current / info+preview) with create, rename, delete, copy and move |
-| **Terminal** | An in-kernel shell with a functional command set (`ls`, `cd`, `cat`, `mkdir`, `rm`, `mv`, `cp`, `mem`, `uptime`, `date`, `abrir`, …) |
-| **Sistema** | Live CPU/RAM info with a memory gauge and sparkline |
-| **Ayuda** | Command list, key bindings, and apps of the dock |
-| **Apagar** | ACPI power down (also `halt` / `reboot` from the terminal) |
+| 1. `make test` builds and runs the kernel tests | Done |
+| 2. Desktop framework: bars, wallpaper, app dispatch, key routing | Done |
+| 3. Dock drawn along the bottom | Pending. Arrow and `Enter` routing is written and tested |
+| 4. Disk formatted and seeded at first boot | Done |
+| 5. Terminal with the full command set | Done |
+| 6. Three-panel Files app | Pending. Only `q` is handled |
+| 7. CPU sparkline and full integration | Pending |
 
-The UI language is Spanish; command names follow the usual Unix conventions.
-The first boot formats the ATA disk and seeds a few welcome files, so the file
-manager and `ls` have content right away.
+91 kernel tests pass in release and in debug, with no warnings. The full work
+plan is in
+[`docs/superpowers/plans/2026-09-24-tuios-desktop.md`](docs/superpowers/plans/2026-09-24-tuios-desktop.md).
+
+Booting lands in the terminal, fullscreen between the title bar and the status
+bar. `F1` through `F5` open an app from anywhere; `Esc` or `F5` close it.
+
+## Apps
+
+| App | What it does | State |
+| --- | --- | --- |
+| **Terminal** | In-kernel shell with 26 commands | Works |
+| **Sistema** | Live CPU/RAM with a memory gauge | Works. The activity sparkline is Task 7 |
+| **Ayuda** | Command list, key bindings, dock apps | Works |
+| **Archivos** | Three-panel file manager (parent / current / info+preview) with create, rename, delete, copy, move | Scaffold. Task 6 is missing |
+| **Apagar** | ACPI power down | Works. Also `halt`, `apagar`, `reboot`, `reiniciar` from the terminal |
+
+The UI language is Spanish. Command names follow the usual Unix conventions,
+with Spanish aliases.
+
+| Group | Commands |
+| --- | --- |
+| Files | `pwd` `cd` `ls` `cat` `touch` `mkdir` `rm` `mv` `cp` |
+| Apps | `help` `ayuda` `apps` `abrir` `sysinfo` |
+| System | `mem` `uptime` `date` `version` `echo` `clear` `random` `pci` `halt` `apagar` `reboot` `reiniciar` |
+
+### What the shell does not do yet
+
+- **No redirection.** `>` does not exist, so you cannot put text into a file from
+  the terminal. `touch` makes an empty file and `cp` copies one, but nothing
+  writes content. This is the most visible gap in the command set.
+- **`..` does not work.** MFS resolves a path by walking directory entries and
+  has no `.` or `..` entries, so `cd ..` and `cat ../notes.txt` fail. Relative
+  paths do work: inside `/home`, `mkdir relative` creates `/home/relative`.
+- **`rm` refuses directories.** There is no `rm -r`.
+- **No pipes.** No `|`, no `&&`.
+
+Nothing panics. Every command that cannot do what it was asked writes a Spanish
+message on the terminal.
+
+## The filesystem
+
+MFS (`src/sys/fs/`) is a hierarchical filesystem with absolute and relative
+paths, a per-process working directory, nested subdirectories, files and
+devices. It lives in the MFS superblock on the ATA disk, at offset 4 MB.
+
+**On first boot** the kernel scans the ATA drives for a superblock. If it finds
+none, it mounts the first drive, formats it, and seeds a welcome tree:
+
+```
+/bienvenida.txt   /manual.txt   /usr/README.txt
+/usr   /home   /tmp   /etc
+```
+
+Seeding is idempotent: a tree that already holds `bienvenida.txt` is left
+alone, so a second boot leaves the image byte-identical.
 
 ## Setup
 
@@ -43,54 +98,69 @@ with the `bootimage` cargo subcommand:
 
 ## Build and run in QEMU
 
-Build the bootable disk image:
+Build the bootable disk image (32 MB, created if missing):
 
-    $ make image        # -> target/x86_64-tuios/release/bootimage-tuios.bin
+    $ make image
 
-Run it in QEMU with a window, or headless with the unix-socket monitor:
+Run it in a window, or headless with the unix-socket monitor:
 
     $ make qemu         # windowed; add monitor=true for a telnet console
-    # headless, with a unix-socket monitor:
     $ qemu-system-x86_64 \
         -name "TUI-OS" -m 32 -smp 2 -cpu core2duo \
-        -drive file=target/x86_64-tuios/release/bootimage-tuios.bin,format=raw \
+        -drive file=disk.img,format=raw \
         -monitor unix:/tmp/tuios-mon.sock,server,nowait \
         -display none -serial file:/tmp/tuios-serial.log
 
-With `-display none` there is no GUI; drive the keyboard through the QEMU
-monitor. **`sendkey` accepts exactly one key per command** — burst them as
-separate commands instead of a comma/space list:
+### Reading the screen and typing
+
+`tools/vgatext.py` boots QEMU headless, waits for the desktop, sends keys, and
+dumps the 80x25 VGA text buffer as readable text:
+
+    $ make dump KEYS="l s ret"
+
+With no keys it only dumps the screen, and the dump goes to stdout.
+
+**QEMU's `sendkey` takes exactly one key per command**, so burst them as
+separate commands:
 
     (monitor) sendkey a
     (monitor) sendkey r
     (monitor) sendkey c
     (monitor) sendkey h
     (monitor) sendkey i
-    ...
     (monitor) sendkey ret
 
-Key names: `ret`, `tab`, `spc`, `backspace`, `f1`–`f12`, `up`/`down`/
-`left`/`right`. Screenshots of the text buffer (80×25 grid) can be read back
-with the PDF/QA scripts under `/tmp/opencode` (`qemu-dump.py` + `xp2text.py`).
+Key names that work: bare letters and digits, `ret`, `tab`, `backspace`,
+`slash`, `dot`, `minus`, `f1`-`f12`, `up`/`down`/`left`/`right`.
+
+**You cannot type a space.** `sendkey space` answers `invalid parameter`, and
+`spc` produces nothing against this kernel. Commands with arguments are
+therefore not verifiable from a screendump; use `make test mode=debug`, which
+covers them.
+
 The kernel drains the whole 8042 output buffer inside a single IRQ1 (cap 32
 bytes, iowait between reads), which keeps fast keyboard bursts working on both
 QEMU and real hardware.
 
 ## Run on real hardware
 
-Boots on x86-64 machines from ~2005–2020 with **BIOS/CSM** boot enabled (UEFI
+Boots on x86-64 machines from ~2005-2020 with **BIOS/CSM** boot enabled (UEFI
 is not supported). Write the image to a USB stick and boot it:
 
     $ sudo dd if=target/x86_64-tuios/release/bootimage-tuios.bin of=/dev/sdX bs=4M conv=fsync
 
-`sdX` is your USB device — **double-check the device name, `dd` will overwrite
-it**. On the machine, enable Legacy/CSM boot and select the USB stick.
-Keyboard is PS/2 (default `qwerty` layout; override at build time with
-`make image keyboard=azerty`).
+`sdX` is your USB device. **Double-check the device name, `dd` will overwrite
+it.** On the machine, enable Legacy/CSM boot and select the USB stick. The
+keyboard is PS/2, `qwerty` layout.
 
 ## Development
 
-    $ make test        # build + boot the image in QEMU and run the kernel tests
+    $ make test              # release, 91 tests
+    $ make test mode=debug   # debug: enables debug_assert, which catches more
+
+Both forms build and boot the real image in QEMU. Run the debug one too: several
+bugs in this repo only show up with `debug_assert` active, because release
+compiles them out and the kernel degrades in silence.
 
 ## License
 
