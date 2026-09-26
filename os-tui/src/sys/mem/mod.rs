@@ -127,12 +127,49 @@ pub fn memory_size() -> usize {
     MEMORY_SIZE.load(Ordering::Relaxed)
 }
 
-pub fn memory_used() -> usize {
-    (memory_size() - heap::heap_size()) + heap::heap_used()
+/// Size of the region handed to the global allocator at boot.
+///
+/// This is memory the kernel *reserved*, not memory that is in use: at boot
+/// the allocator has handed out almost none of it.
+pub fn heap_capacity() -> usize {
+    heap::heap_size()
 }
 
+/// Physical bytes the kernel has actually committed.
+///
+/// Every frame the frame allocator has handed out is committed, because those
+/// frames are mapped and can no longer be given to anyone else. The heap's
+/// frames are counted in there, but the allocator only owns part of the space
+/// they cover, so its unused remainder is subtracted back out.
+fn committed_bytes(used_frames: usize, frame_size: usize, heap_free: usize) -> usize {
+    used_frames
+        .saturating_mul(frame_size)
+        .saturating_sub(heap_free)
+}
+
+/// Memory in use: committed frames, less the unused part of the heap.
+///
+/// Reporting the *whole* heap reservation as used makes the figure a constant
+/// fraction of RAM — half, since the heap is sized as half of memory — no
+/// matter how much RAM the machine actually has.
+pub fn memory_used() -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let used_frames = with_frame_allocator(|a| a.used_frames());
+        committed_bytes(used_frames, crate::sys::x86::page::PAGE_SIZE, heap::heap_free())
+    }
+
+    // No bitmap frame allocator on this target: the only thing we can account
+    // for is what the global allocator has handed out.
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        heap::heap_used()
+    }
+}
+
+/// Memory not in use, i.e. the rest of RAM.
 pub fn memory_free() -> usize {
-    heap::heap_free()
+    memory_size().saturating_sub(memory_used())
 }
 
 pub fn phys_to_virt(addr: PhysAddr) -> VirtAddr {
@@ -147,4 +184,51 @@ pub fn virt_to_phys(addr: VirtAddr) -> Option<PhysAddr> {
 #[cfg(target_arch = "x86_64")]
 pub fn virt_to_phys(addr: VirtAddr) -> Option<PhysAddr> {
     mapper().translate_addr(addr.into()).map(|x| x.into())
+}
+
+#[test_case]
+fn test_committed_bytes_counts_frames() {
+    // Nothing consumed, nothing reserved for the heap.
+    assert_eq!(committed_bytes(10, 4096, 0), 10 * 4096);
+}
+
+#[test_case]
+fn test_committed_bytes_excludes_free_heap() {
+    // All 10 committed frames belong to a heap the allocator has not touched:
+    // reserved, but not in use.
+    assert_eq!(committed_bytes(10, 4096, 10 * 4096), 0);
+}
+
+#[test_case]
+fn test_committed_bytes_counts_partially_used_heap() {
+    // 10 frames committed, 1 page of heap still free -> 9 pages in use.
+    assert_eq!(committed_bytes(10, 4096, 4096), 9 * 4096);
+}
+
+#[test_case]
+fn test_committed_bytes_never_underflows() {
+    // Must not underflow if the heap ever claims more free than is committed.
+    assert_eq!(committed_bytes(0, 4096, 999_999), 0);
+}
+
+#[test_case]
+fn test_memory_used_is_not_the_heap_reservation() {
+    let used = memory_used();
+    let free = memory_free();
+    let total = memory_size();
+    let heap = heap_capacity();
+
+    printk!(
+        "MEM total={} B used={} B free={} B heap_reserved={} B\n",
+        total, used, free, heap
+    );
+
+    // The kernel reserves half of RAM for the heap at boot but the allocator
+    // has handed out almost none of it, so in-use must stay well under the
+    // reservation instead of tracking it one-for-one.
+    assert!(used < heap / 2, "in use is not below the heap reservation");
+
+    // The two figures must still account for all of RAM, so the status bar
+    // percentage stays coherent.
+    assert!(used + free == total, "in use plus free does not equal total");
 }

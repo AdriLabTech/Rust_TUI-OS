@@ -90,8 +90,12 @@ impl BlockDeviceIO for MemBlockDevice {
 }
 
 pub fn mount_mem() {
-    let mem = sys::mem::memory_free() / 2;
-    let len = mem / super::BLOCK_SIZE; // TODO: take a size argument
+    // The device is a plain heap allocation, so it has to be sized against the
+    // heap, not against "free memory": free memory counts every frame the
+    // frame allocator has not handed out, including the whole heap, so using it
+    // here would ask the heap to allocate more than it owns.
+    let bytes = sys::mem::heap_capacity() / 2;
+    let len = bytes / super::BLOCK_SIZE; // TODO: take a size argument
     let dev = MemBlockDevice::new(len);
     *BLOCK_DEVICE.lock() = Some(BlockDevice::Mem(dev));
 }
