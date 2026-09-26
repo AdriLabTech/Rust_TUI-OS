@@ -16,25 +16,30 @@ directly into the VGA 80x25 text buffer** (`0xB8000`) through a custom
 
 ## Project status
 
-The desktop boots, dispatches apps, and seeds the disk on its own. **The dock is
-not drawn yet** and the Files app is a scaffold.
+The desktop boots, draws its dock, dispatches apps, and seeds the disk on its
+own. **The Files app is a scaffold.**
 
 | Task | State |
 | --- | --- |
 | 1. `make test` builds and runs the kernel tests | Done |
 | 2. Desktop framework: bars, wallpaper, app dispatch, key routing | Done |
-| 3. Dock drawn along the bottom | Pending. Arrow and `Enter` routing is written and tested |
+| 3. Dock drawn along the bottom | Done |
 | 4. Disk formatted and seeded at first boot | Done |
 | 5. Terminal with the full command set | Done |
 | 6. Three-panel Files app | Pending. Only `q` is handled |
 | 7. CPU sparkline and full integration | Pending |
 
-94 kernel tests pass in release and in debug, with no warnings. The full work
+103 kernel tests and 21 tool tests pass in release and in debug, with no
+warnings. The full work
 plan is in
 [`docs/superpowers/plans/2026-09-24-tuios-desktop.md`](docs/superpowers/plans/2026-09-24-tuios-desktop.md).
 
 Booting lands in the terminal, fullscreen between the title bar and the status
 bar. `F1` through `F5` open an app from anywhere; `Esc` or `F5` close it.
+
+The dock is row 23: `▸ Archivos  Terminal  Sistema  Ayuda  ░  Apagar`, with `◀`
+and `▶` to move, `Enter` to open and `Esc` to go back. The `▸` marks the
+highlighted entry.
 
 ## The terminal
 
@@ -149,7 +154,11 @@ separate commands:
     (monitor) sendkey ret
 
 Key names that work: bare letters and digits, `spc` (the space), `ret`, `tab`,
-`backspace`, `slash`, `dot`, `minus`, `f1`-`f12`, `up`/`down`/`left`/`right`.
+`backspace`, `esc`, `slash`, `dot`, `minus`, `f1`-`f12`,
+`up`/`down`/`left`/`right`.
+
+Two names that **do not** exist and answer `invalid parameter`: `space` (it is
+`spc`) and `escape` (it is `esc`).
 
 **The space is `spc`, not `space`.** `sendkey space` answers `invalid parameter`
 because that is not QEMU's name for it, but `spc` types a space perfectly.
@@ -190,8 +199,12 @@ build has to be rebuilt with `make image keyboard=azerty`.
 
 ## Development
 
-    $ make test              # release, 94 tests
+    $ make test              # release, 103 tests
     $ make test mode=debug   # debug: enables debug_assert, which catches more
+
+And the tests for the tool that reads the screen back:
+
+    $ cd tools && python3 -m unittest test_vgatext
 
 Both forms build and boot the real image in QEMU. Run the debug one too: several
 bugs in this repo only show up with `debug_assert` active, because release
