@@ -157,8 +157,17 @@ impl BlockDeviceIO for AtaBlockDevice {
             return Ok(());
         }
 
-        let max = self.block_count() - block_addr as usize;
+        // A read addressed past the end of the device is a short read, not a
+        // panic: `block_count() - block_addr` used to underflow and abort the
+        // kernel. A drive that reports an untrustworthy size (an IDENTIFY with
+        // no disk behind it) makes MFS compute addresses past the end, and the
+        // global constraint is that errors surface as messages, never as a
+        // panic. `Block::read` logs the error and keeps its zeroed buffer.
+        let max = self.block_count().saturating_sub(block_addr as usize);
         let n = cmp::min(ATA_READ_AHEAD, max);
+        if n == 0 {
+            return Err(());
+        }
         let mut blocks = vec![0; n * super::BLOCK_SIZE];
         sys::ata::read(self.dev.bus, self.dev.dsk, block_addr, &mut blocks)?;
         for (i, chunk) in blocks.chunks(super::BLOCK_SIZE).enumerate() {
@@ -204,6 +213,26 @@ pub fn format_ata() {
 
 pub fn is_mounted() -> bool {
     BLOCK_DEVICE.lock().is_some()
+}
+
+/// Size of the mounted device in blocks, or `None` if nothing is mounted.
+pub fn block_count() -> Option<usize> {
+    BLOCK_DEVICE.lock().as_ref().map(|dev| dev.block_count())
+}
+
+/// Take the mounted device out of the global slot, leaving nothing mounted.
+///
+/// Only for tests, which need to exercise `BlockDeviceIO` against a real ATA
+/// geometry without going through MFS.
+#[cfg(test)]
+pub fn take_for_test() -> Option<BlockDevice> {
+    BLOCK_DEVICE.lock().take()
+}
+
+/// Put a device taken by `take_for_test` back.
+#[cfg(test)]
+pub fn put_for_test(dev: BlockDevice) {
+    *BLOCK_DEVICE.lock() = Some(dev);
 }
 
 pub fn dismount() {
