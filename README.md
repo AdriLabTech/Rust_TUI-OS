@@ -13,27 +13,31 @@ dibujado directamente sobre el buffer VGA 80×25.**
 
 ## Estado del proyecto
 
-El escritorio arranca, despacha aplicaciones y siembra el disco solo. **El dock
-todavía no se dibuja** y la app Archivos es un andamiaje. Esto es lo que hay y
-lo que no:
+El escritorio arranca, dibuja su dock, despacha aplicaciones y siembra el disco
+solo. **La app Archivos es un andamiaje.** Esto es lo que hay y lo que no:
 
 | Tarea | Estado |
 | --- | --- |
 | 1. `make test` compila y ejecuta las pruebas del kernel en QEMU | Hecha |
 | 2. Framework de escritorio: barras, fondo, despacho de apps, enrutado de teclas | Hecha |
-| 3. Dock dibujado en la parte inferior | Pendiente. El enrutado de flechas y `Enter` ya está escrito y probado |
+| 3. Dock dibujado en la parte inferior | Hecha |
 | 4. El disco se formatea y se siembra en el primer arranque | Hecha |
 | 5. Terminal con el conjunto completo de comandos | Hecha |
 | 6. App Archivos de tres paneles | Pendiente. Solo responde a `q` |
 | 7. Sparkline de CPU y verificación integral | Pendiente |
 
-Las 94 pruebas del kernel pasan en release y en debug, sin warnings. El plan de
+Las 103 pruebas del kernel y las 21 de la herramienta de volcado pasan en
+release y en debug, sin warnings. El plan de
 trabajo completo está en
 [`os-tui/docs/superpowers/plans/2026-09-24-tuios-desktop.md`](os-tui/docs/superpowers/plans/2026-09-24-tuios-desktop.md).
 
 Al encender aterrizas en la terminal, a pantalla completa entre la barra de
 título y la de estado. Las teclas `F1` a `F5` abren una aplicación desde
 cualquier sitio, y `Esc` o `F5` cierran la que tengas abierta.
+
+El dock es la fila 23: `▸ Archivos  Terminal  Sistema  Ayuda  ░  Apagar`, con
+`◀` y `▶` para moverse, `Intro` para abrir y `Esc` para volver. El `▸` marca la
+entrada resaltada.
 
 ## La terminal
 
@@ -102,7 +106,7 @@ un dock y aplicaciones a pantalla completa.
 - **Interfaz en español.** Toda la UI del sistema está en español.
 - **Arranca en hardware real.** x86-64 con BIOS/CSM (2005-2020).
 - **Pruebas dentro del kernel.** `make test` arranca la imagen real en QEMU y
-  ejecuta 94 pruebas contra el frame allocator, el sistema de ficheros y el
+  ejecuta 103 pruebas contra el frame allocator, el sistema de ficheros y el
   terminal de verdad.
 
 ## El escritorio
@@ -183,8 +187,11 @@ mandarlas de una en una:
     (monitor) sendkey ret
 
 Nombres de tecla que funcionan: letras y dígitos sueltos, `spc` (el espacio),
-`ret`, `tab`, `backspace`, `slash`, `dot`, `minus`, `f1`-`f12`,
+`ret`, `tab`, `backspace`, `esc`, `slash`, `dot`, `minus`, `f1`-`f12`,
 `up`/`down`/`left`/`right`.
+
+Dos nombres que **no** existen y devuelven `invalid parameter`: `space`
+(es `spc`) y `escape` (es `esc`).
 
 **El espacio se llama `spc`, no `space`.** `sendkey space` responde `invalid
 parameter` porque ese no es el nombre de QEMU, pero `spc` teclea un espacio
@@ -225,8 +232,12 @@ que si no es `qwerty` hay que reconstruirla con `make image keyboard=azerty`.
 
 ## Desarrollo
 
-    $ make test              # release, 94 pruebas
+    $ make test              # release, 103 pruebas
     $ make test mode=debug   # debug: activa los debug_assert, que cazan más fallos
+
+Y las pruebas de la herramienta que lee la pantalla de vuelta:
+
+    $ cd tools && python3 -m unittest test_vgatext
 
 Las dos formas compilan y arrancan la imagen real en QEMU. Ejecuta la de debug
 también: varios bugs de este repo solo se ven con los `debug_assert` activos,
