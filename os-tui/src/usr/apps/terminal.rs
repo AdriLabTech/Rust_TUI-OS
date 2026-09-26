@@ -38,6 +38,7 @@ pub static COMMANDS: &[(&str, &str)] = &[
     ("ls", "Lista el contenido de un directorio: ls [ruta]"),
     ("cat", "Muestra el contenido de un fichero: cat <fichero>"),
     ("touch", "Crea un fichero vacio: touch <fichero>"),
+    ("write", "Escribe texto, sobrescribiendo: write <fichero> <texto>"),
     ("mkdir", "Crea un directorio: mkdir <directorio>"),
     ("rm", "Borra un fichero: rm <fichero>"),
     ("mv", "Mueve o renombra: mv <origen> <destino>"),
@@ -72,11 +73,14 @@ fn no_such_file(path: &str) -> String {
     format!("no existe la ruta '{}'", path)
 }
 
-/// `ls [ruta]` — one entry per line, directories included.
+/// `ls [ruta]` — one entry per line, directories included, sorted.
 ///
 /// With no argument it lists the working directory. `.` is not used as the
 /// default: MFS resolves paths by walking directory entries and has no entry
 /// literally named `.`, so the CWD is named directly instead.
+///
+/// The sort is on the name, not on the order MFS happens to store entries in,
+/// which is the order they were created.
 fn exec_ls(args: &[&str], out: &mut Vec<String>) {
     let path = match args.first() {
         Some(p) => (*p).to_string(),
@@ -84,9 +88,16 @@ fn exec_ls(args: &[&str], out: &mut Vec<String>) {
     };
     match sys::fs::Dir::open(&path) {
         Some(dir) => {
-            for entry in dir.entries() {
-                out.push(entry.name());
-            }
+            let mut names: Vec<String> = dir.entries().map(|e| e.name()).collect();
+            // Ignoring case, so a directory does not come out as "Zeta" followed
+            // by "alfa"; the raw bytes break the tie, so the order is total and
+            // `Nota` always precedes `nota`.
+            names.sort_by(|a, b| {
+                a.to_lowercase()
+                    .cmp(&b.to_lowercase())
+                    .then_with(|| a.cmp(b))
+            });
+            out.extend(names);
         }
         None => out.push(no_such_file(&path)),
     }
@@ -139,6 +150,38 @@ fn exec_touch(args: &[&str], out: &mut Vec<String>) {
     let flags = sys::fs::OpenFlag::Write as u8 | sys::fs::OpenFlag::Create as u8;
     if sys::fs::open(path, flags).is_none() {
         out.push(format!("touch: no se pudo crear '{}'", path));
+    }
+}
+
+/// `write <fichero> <texto>` — everything after the file name is the text, so
+/// spaces need no quoting, exactly as with `echo`.
+///
+/// Both parts are required: a file name with no text is a mistyped command, not
+/// a request to empty a file, so it prints the usage instead.
+fn exec_write(args: &[&str], out: &mut Vec<String>) {
+    if args.len() < 2 {
+        out.push(usage("write", "<fichero> <texto>"));
+        return;
+    }
+    let (path, text) = (args[0], args[1..].join(" "));
+    // Name what it is rather than reporting a bare failure, the way `cat` does.
+    // MFS refuses to open a directory for writing, so without this the user only
+    // learns that "algo" was not written, not that "/usr" was the wrong target.
+    if let Some(info) = sys::fs::info(path) {
+        if info.is_dir() {
+            out.push(format!("write: '{}' es un directorio", path));
+            return;
+        }
+    }
+    let flags = sys::fs::OpenFlag::Write as u8 | sys::fs::OpenFlag::Create as u8;
+    match sys::fs::open(path, flags) {
+        Some(mut file) => {
+            if file.write(text.as_bytes()).is_err() {
+                out.push(format!("write: no se pudo escribir '{}'", path));
+            }
+            file.close();
+        }
+        None => out.push(format!("write: no se pudo escribir '{}'", path)),
     }
 }
 
@@ -519,6 +562,7 @@ impl TerminalApp {
             "ls" => exec_ls(&args, &mut out),
             "cat" => exec_cat(&args, &mut out),
             "touch" => exec_touch(&args, &mut out),
+            "write" => exec_write(&args, &mut out),
             "mkdir" => exec_mkdir(&args, &mut out),
             "rm" => exec_rm(&args, &mut out),
             "mv" => exec_mv(&args, &mut out),
@@ -820,6 +864,142 @@ mod tests {
     }
 
     #[test_case]
+    fn exec_ls_alphabetical_order_ignoring_case() {
+        fresh_fs();
+        let mut term = TerminalApp::new();
+        term.exec("mkdir /d");
+        // Created in reverse-alphabetical order on purpose: an `ls` that reported
+        // MFS storage order would fail this, so the test cannot pass by luck.
+        for name in ["zeta.txt", "media", "alfa.txt", "ano.txt", "Beta.txt"] {
+            assert!(term.exec(&format!("touch /d/{}", name)).0.is_empty(), "setup: touch /d/{}", name);
+        }
+        let (out, _) = term.exec("ls /d");
+        assert_eq!(
+            out,
+            vec![
+                "alfa.txt".to_string(),
+                "ano.txt".to_string(),
+                "Beta.txt".to_string(),
+                "media".to_string(),
+                "zeta.txt".to_string(),
+            ],
+            "ls must sort alphabetically ignoring case, not list storage order"
+        );
+    }
+
+    #[test_case]
+    fn exec_ls_breaks_case_ties_by_raw_bytes() {
+        fresh_fs();
+        let mut term = TerminalApp::new();
+        term.exec("mkdir /d");
+        term.exec("touch /d/nota");
+        term.exec("touch /d/Nota");
+        let (out, _) = term.exec("ls /d");
+        assert_eq!(
+            out,
+            vec!["Nota".to_string(), "nota".to_string()],
+            "names equal ignoring case must still come out in a stable order"
+        );
+    }
+
+    #[test_case]
+    fn exec_write_creates_a_file_that_cat_reads_back() {
+        fresh_fs();
+        let mut term = TerminalApp::new();
+        term.exec("mkdir /d");
+        let (out, act) = term.exec("write /d/nota.txt hola mundo");
+        assert!(out.is_empty(), "write should be silent on success: {:?}", out);
+        assert_eq!(act, AppAction::Keep);
+        let (out, _) = term.exec("cat /d/nota.txt");
+        assert_eq!(
+            out,
+            vec!["hola mundo".to_string()],
+            "the text after the file name is the text written"
+        );
+    }
+
+    #[test_case]
+    fn exec_write_overwrites_and_truncates() {
+        fresh_fs();
+        let mut term = TerminalApp::new();
+        // Longer than the text that replaces it, so a missing truncate shows up
+        // as a tail instead of passing by accident.
+        let long = "abcdefghij".repeat(40);
+        assert!(term.exec(&format!("write /nota.txt {}", long)).0.is_empty());
+        let (out, _) = term.exec("cat /nota.txt");
+        assert_eq!(out, vec![long], "setup: the long text should be there");
+
+        assert!(term.exec("write /nota.txt segunda").0.is_empty());
+        let (out, _) = term.exec("cat /nota.txt");
+        assert_eq!(
+            out,
+            vec!["segunda".to_string()],
+            "write must replace the old contents completely, leaving no tail"
+        );
+    }
+
+    #[test_case]
+    fn exec_write_needs_both_a_file_and_text() {
+        fresh_fs();
+        let mut term = TerminalApp::new();
+        let (out, _) = term.exec("write");
+        assert!(
+            out.join(" | ").contains("uso"),
+            "no arguments should print the usage, got {:?}",
+            out
+        );
+        // A path in a directory that exists, so the only thing wrong with this
+        // call is the missing text.
+        let (out, _) = term.exec("write /nota.txt");
+        assert!(
+            out.join(" | ").contains("uso"),
+            "a file name with no text is a mistake, not an empty file: {:?}",
+            out
+        );
+        // And the rejected call left nothing behind.
+        let (out, _) = term.exec("ls /");
+        assert!(
+            !out.contains(&"nota.txt".to_string()),
+            "a usage error must not create a file: {:?}",
+            out
+        );
+    }
+
+    #[test_case]
+    fn exec_write_refuses_a_directory() {
+        fresh_fs();
+        let mut term = TerminalApp::new();
+        let (out, _) = term.exec("write /usr algo");
+        assert!(out[0].contains("directorio"), "got {:?}", out);
+        // The directory survives, with its contents.
+        let (out, _) = term.exec("ls /usr");
+        assert_eq!(out, vec!["README.txt".to_string()]);
+    }
+
+    #[test_case]
+    fn exec_write_into_a_missing_directory_is_a_spanish_error() {
+        fresh_fs();
+        let mut term = TerminalApp::new();
+        let (out, act) = term.exec("write /no-existe/nota.txt hola");
+        assert!(out[0].contains("no se pudo escribir"), "got {:?}", out);
+        assert_eq!(act, AppAction::Keep, "a failed write must not switch apps");
+    }
+
+    #[test_case]
+    fn exec_touch_leaves_existing_content_alone() {
+        fresh_fs();
+        let mut term = TerminalApp::new();
+        term.exec("write /nota.txt contenido");
+        assert!(term.exec("touch /nota.txt").0.is_empty());
+        let (out, _) = term.exec("cat /nota.txt");
+        assert_eq!(
+            out,
+            vec!["contenido".to_string()],
+            "touch must not truncate, which is what makes it non-destructive"
+        );
+    }
+
+    #[test_case]
     fn exec_unknown_command_is_a_spanish_error() {
         fresh_fs();
         let mut term = TerminalApp::new();
@@ -867,9 +1047,9 @@ mod tests {
     fn command_catalog_has_dock_aliases() {
         let names: Vec<&str> = COMMANDS.iter().map(|(n, _)| *n).collect();
         for n in [
-            "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm", "mv", "cp", "help", "ayuda",
-            "apps", "abrir", "sysinfo", "mem", "uptime", "date", "version", "echo", "clear",
-            "random", "pci", "halt", "apagar", "reboot", "reiniciar",
+            "pwd", "cd", "ls", "cat", "touch", "write", "mkdir", "rm", "mv", "cp", "help",
+            "ayuda", "apps", "abrir", "sysinfo", "mem", "uptime", "date", "version", "echo",
+            "clear", "random", "pci", "halt", "apagar", "reboot", "reiniciar",
         ] {
             assert!(names.contains(&n), "missing command {}", n);
         }
