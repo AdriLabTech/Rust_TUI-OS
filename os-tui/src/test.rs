@@ -91,7 +91,21 @@ fn panic(info: &PanicInfo) -> ! {
     let csi_color = api::console::Style::color("red");
     let csi_reset = api::console::Style::reset();
     printk!("{}failed{}\n\n", csi_color, csi_reset);
-    printk!("{}\n\n", info);
+
+    // Formatting `info` itself prints the panic message as a bare template: the
+    // format arguments never make it into the output, so a test that fails with
+    // "a {left} b {right}" reports "a {left} b {right}" and says nothing about
+    // the values. `message()` carries the same `Arguments` and renders them.
+    if let Some(location) = info.location() {
+        printk!(
+            "at {}:{}:{}\n",
+            location.file(),
+            location.line(),
+            location.column()
+        );
+    }
+    printk!("{}\n\n", info.message());
+
     exit_qemu(QemuExitCode::Failed);
     crate::hang();
 }
