@@ -96,13 +96,20 @@ screenshot:
 # socket, waits for the desktop, then decodes 0xB8000. Pass KEYS="l s ret" to
 # type before dumping, COLORS=true to mark tinted cells.
 qmp-sock = /tmp/tuios-qmp.sock
+qmp-pid = /tmp/tuios-qmp.pid
 
+# QEMU is killed by the pid we recorded, and never by name. `pkill -f
+# qemu-system-$(arch)` looks like the obvious way to do it and is wrong: `-f`
+# matches whole command lines, and that pattern is part of *this recipe's* own
+# command line, so pkill signals the shell running the recipe. Make then reports
+# `Terminado` and exits 2 after a dump that was perfectly fine -- a failure with
+# no cause behind it. Two rules, then: record the pid, and let vgatext's exit
+# status be make's, so a dump that really did fail fails the build too.
 dump:
-	rm -f $(qmp-sock)
-	($(qemu) $(qemu-opts) -qmp unix:$(qmp-sock),server,nowait -display none &) ; \
-	sleep $(bootwait) ; \
-	python3 tools/vgatext.py --socket $(qmp-sock) $(if $(KEYS),--keys "$(KEYS)",) $(if $(COLORS),--colors,) ; \
-	pkill -f 'qemu-system-$(arch)' || true
+	rm -f $(qmp-sock) $(qmp-pid)
+	$(qemu) $(qemu-opts) -qmp unix:$(qmp-sock),server,nowait -display none & echo $$! > $(qmp-pid)
+	sleep $(bootwait)
+	python3 tools/vgatext.py --socket $(qmp-sock) $(if $(KEYS),--keys "$(KEYS)",) $(if $(COLORS),--colors,); status=$$?; kill $$(cat $(qmp-pid)) 2>/dev/null || true; rm -f $(qmp-pid); exit $$status
 
 test-opts = --lib
 ifeq ($(mode),release)
