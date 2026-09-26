@@ -27,7 +27,7 @@ lo que no:
 | 6. App Archivos de tres paneles | Pendiente. Solo responde a `q` |
 | 7. Sparkline de CPU y verificación integral | Pendiente |
 
-Las 91 pruebas del kernel pasan en release y en debug, sin warnings. El plan de
+Las 94 pruebas del kernel pasan en release y en debug, sin warnings. El plan de
 trabajo completo está en
 [`os-tui/docs/superpowers/plans/2026-09-24-tuios-desktop.md`](os-tui/docs/superpowers/plans/2026-09-24-tuios-desktop.md).
 
@@ -35,19 +35,55 @@ Al encender aterrizas en la terminal, a pantalla completa entre la barra de
 título y la de estado. Las teclas `F1` a `F5` abren una aplicación desde
 cualquier sitio, y `Esc` o `F5` cierran la que tengas abierta.
 
-## Capturas
+## La terminal
 
-### Terminal integrado
+Es la pieza central del sistema: un shell completo que vive dentro del kernel,
+con la misma disposición de teclado, historial y autocompletado que un shell de
+Unix, hablando con el sistema de ficheros real en lugar de con uno de mentira.
 
 ![Terminal del sistema con comandos ejecutados](docs/comandos.png)
+
+Los nombres siguen las convenciones habituales de Unix, con alias en español.
+
+| Categoría | Comandos |
+| --- | --- |
+| Ficheros | `pwd` `cd` `ls` `cat` `touch` `mkdir` `rm` `mv` `cp` |
+| Aplicaciones | `help` `ayuda` `apps` `abrir` `sysinfo` |
+| Sistema | `mem` `uptime` `date` `version` `echo` `clear` `random` `pci` `halt` `apagar` `reboot` `reiniciar` |
+
+`abrir` acepta el nombre del dock (`abrir Sistema`) y salta a esa aplicación.
+
+En la línea de comandos tienes historial con `↑` y `↓`, edición con `←`, `→`,
+`Inicio` y `Fin`, `Supr` y `Retroceso`, y `Tab` completa los nombres de comando
+que empiezan por lo que ya has escrito (mientras no hayas puesto un espacio).
+
+Los comandos de ficheros no son de juguete: `cat` lee con el recorrido real de
+MFS, `cp` copia en trozos a través de `FileIO` para no corromper binarios, y
+`mv` mueve dentro del mismo disco. `cd` mueve el directorio de trabajo del
+proceso, `rm` borra ficheros, y `pci` lista el hardware leyendo los campos de
+`DeviceConfig`.
+
+Un fallo nunca entra en pánico: cada comando que no puede hacer lo que le piden
+escribe un mensaje en español en el terminal.
+
+### Lo que el shell todavía no hace
+
+- **No hay redirección.** `>` no existe, así que no hay forma de meter texto en
+  un fichero desde la terminal. `touch` crea el fichero vacío y `cp` copia, pero
+  no hay comando que escriba contenido. Es lo primero que debería venir.
+- **`..` no funciona.** MFS resuelve una ruta recorriendo entradas de
+  directorio, y no tiene entradas `.` ni `..`, así que `cd ..` y
+  `cat ../notas.txt` fallan. Las rutas relativas sí: dentro de `/home`,
+  `mkdir relativo` crea `/home/relativo`.
+- **`rm` rechaza los directorios.** No hay `rm -r`. El mensaje apunta al
+  explorador de archivos.
+- **No hay canalización.** Ni `|`, ni `>`, ni `&&`.
+
+## Capturas
 
 ### Monitor del sistema
 
 ![Aplicación Sistema con medidor de memoria y actividad de CPU](docs/gestion_memoria.png)
-
-Estas dos imágenes son capturas de ventana de QEMU, no volcados del buffer de
-texto. Nadie ha verificado su contenido contra el código actual, así que no las
-uses como referencia de la interfaz.
 
 ## ¿Qué es TUI-OS?
 
@@ -66,7 +102,7 @@ un dock y aplicaciones a pantalla completa.
 - **Interfaz en español.** Toda la UI del sistema está en español.
 - **Arranca en hardware real.** x86-64 con BIOS/CSM (2005-2020).
 - **Pruebas dentro del kernel.** `make test` arranca la imagen real en QEMU y
-  ejecuta 91 pruebas contra el frame allocator, el sistema de ficheros y el
+  ejecuta 94 pruebas contra el frame allocator, el sistema de ficheros y el
   terminal de verdad.
 
 ## El escritorio
@@ -78,37 +114,6 @@ un dock y aplicaciones a pantalla completa.
 | **Ayuda** | Lista de comandos, atajos y aplicaciones del dock | Funciona |
 | **Archivos** | Administrador de tres paneles (padre / actual / info y vista previa) con crear, renombrar, borrar, copiar y mover | Andamiaje. Falta la Tarea 6 |
 | **Apagar** | Apagado por ACPI | Funciona. También `halt`, `apagar`, `reboot` y `reiniciar` desde la terminal |
-
-## El terminal
-
-Los nombres siguen las convenciones habituales de Unix, con alias en español.
-
-| Categoría | Comandos |
-| --- | --- |
-| Ficheros | `pwd` `cd` `ls` `cat` `touch` `mkdir` `rm` `mv` `cp` |
-| Aplicaciones | `help` `ayuda` `apps` `abrir` `sysinfo` |
-| Sistema | `mem` `uptime` `date` `version` `echo` `clear` `random` `pci` `halt` `apagar` `reboot` `reiniciar` |
-
-`abrir` acepta el nombre del dock (`abrir Sistema`) y salta a esa aplicación.
-
-### Lo que el shell todavía no hace
-
-Conviene saberlo antes de escribir scripts:
-
-- **No hay redirección.** `>` no existe, así que no puedes meter texto en un
-  fichero desde la terminal. `touch` crea el fichero vacío y `cp` copia, pero no
-  hay forma de escribir contenido. Es el hueco más visible del conjunto de
-  comandos.
-- **`..` no funciona.** MFS resuelve una ruta recorriendo entradas de
-  directorio, y no tiene entradas `.` ni `..`, así que `cd ..` y
-  `cat ../notas.txt` fallan. Las rutas relativas sí: dentro de `/home`,
-  `mkdir relativo` crea `/home/relativo`.
-- **`rm` rechaza los directorios.** No hay `rm -r`. El mensaje apunta al
-  explorador de archivos.
-- **No hay canalización.** Ni `|`, ni `>`, ni `&&`.
-
-Un fallo nunca entra en pánico: cada comando que no puede hacer lo que le piden
-escribe un mensaje en español en el terminal.
 
 ## El sistema de ficheros
 
@@ -177,17 +182,34 @@ mandarlas de una en una:
     (monitor) sendkey i
     (monitor) sendkey ret
 
-Nombres de tecla que funcionan: letras y dígitos sueltos, `ret`, `tab`,
-`backspace`, `slash`, `dot`, `minus`, `f1`-`f12`, `up`/`down`/`left`/`right`.
+Nombres de tecla que funcionan: letras y dígitos sueltos, `spc` (el espacio),
+`ret`, `tab`, `backspace`, `slash`, `dot`, `minus`, `f1`-`f12`,
+`up`/`down`/`left`/`right`.
 
-**El espacio no se puede escribir.** `sendkey space` responde `invalid
-parameter` y `spc` no produce nada contra este kernel. Los comandos con
-argumentos no se pueden verificar con volcados de pantalla: usa
-`make test mode=debug`, que sí los cubre.
+**El espacio se llama `spc`, no `space`.** `sendkey space` responde `invalid
+parameter` porque ese no es el nombre de QEMU, pero `spc` teclea un espacio
+perfectamente. `make dump KEYS="..."` separa las teclas por espacios, así que
+`spc` es justo el token que hay que escribir:
+
+    $ make dump KEYS="e c h o spc h o l a ret"
+    ...
+    > echo hola
+    hola
 
 El kernel vacía todo el buffer de salida del 8042 dentro de una sola IRQ1 (máx.
 32 bytes, esperando entre lecturas), lo que mantiene funcionando las ráfagas
 rápidas de teclado tanto en QEMU como en hardware real.
+
+### Cambiar la distribución del teclado
+
+La distribución se compila dentro del kernel, así que hay que recompilar:
+
+    $ make image keyboard=azerty
+    $ make image keyboard=dvorak
+    $ make image keyboard=qwerty   # por defecto
+
+Un nombre que no sea uno de esos tres hace que `make` pare con un error, en
+lugar de construir una imagen cuyo teclado no responde.
 
 ## Ejecutar en hardware real
 
@@ -198,11 +220,12 @@ está soportado). Escribe la imagen en un USB y arranca desde él:
 
 `sdX` es tu dispositivo USB. **Comprueba bien el nombre, `dd` lo va a
 sobrescribir.** En la máquina, activa el arranque Legacy/CSM y selecciona el
-USB. El teclado es PS/2, con disposición `qwerty`.
+USB. El teclado es PS/2. La disposición se compila dentro de la imagen, así
+que si no es `qwerty` hay que reconstruirla con `make image keyboard=azerty`.
 
 ## Desarrollo
 
-    $ make test              # release, 91 pruebas
+    $ make test              # release, 94 pruebas
     $ make test mode=debug   # debug: activa los debug_assert, que cazan más fallos
 
 Las dos formas compilan y arrancan la imagen real en QEMU. Ejecuta la de debug
