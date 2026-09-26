@@ -16,7 +16,6 @@ use vte::{Params, Parser, Perform};
 
 const FG: Color = Color::DarkWhite;
 const BG: Color = Color::DarkBlack;
-const UNPRINTABLE: u8 = 0x00; // Unprintable chars will be replaced by this one
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
@@ -213,14 +212,13 @@ impl Writer {
 
                 let x = self.writer[0];
                 let y = self.writer[1];
-                let ascii_code = if is_printable(byte) {
-                    byte
-                } else {
-                    UNPRINTABLE
-                };
+                // Newline, carriage return and backspace were all handled by
+                // the arms above, so whatever lands here is a glyph to draw --
+                // including the CP437 range 0x01-0x1F that an ASCII
+                // printability test would blank out.
                 let color_code = self.color_code;
                 let c = ScreenChar {
-                    ascii_code,
+                    ascii_code: byte,
                     color_code,
                 };
                 let ptr = &mut self.screen_buffer.chars[y][x];
@@ -278,7 +276,11 @@ impl Writer {
         if x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT {
             return false;
         }
-        let c = if super::is_printable(c) { c } else { UNPRINTABLE };
+        // Every one of the 256 byte values is a displayable glyph in the
+        // CP437 text-mode font, 0x01-0x1F included: the bullet, the card suits
+        // and the arrows all live there. Do not run this through
+        // `is_printable` -- that is an ASCII test meant for typed input, and
+        // applying it here blanks the arrows out of the dock.
         let cell = ScreenChar {
             ascii_code: c,
             color_code: ColorCode::new(fg, bg),
@@ -611,4 +613,20 @@ fn test_parse_palette() {
     assert_eq!(parse_palette("PADDDDED"), Ok((0xA, 0xDD, 0xDD, 0xED)));
     assert_eq!(parse_palette("BAAAAAAD"), Err(()));
     assert_eq!(parse_palette("BAD"), Err(()));
+}
+
+#[test_case]
+fn test_set_cell_keeps_low_cp437_glyphs() {
+    // CP437 draws real glyphs across 0x01-0x1F: the bullet at 0x07, the card
+    // suits at 0x03-0x06, and the arrows at 0x10/0x11/0x18-0x1F. An ASCII
+    // printability test rejects that whole range, so every one of them reaches
+    // the screen as a blank cell -- which is how the dock loses its arrows.
+    for byte in [0x03u8, 0x07, 0x0F, 0x10, 0x11, 0x18, 0x1A, 0x1E, 0x1F, 0x7F] {
+        WRITER.lock().set_cell(0, 0, byte, FG, BG);
+        assert_eq!(
+            WRITER.lock().screen_buffer.chars[0][0].ascii_code,
+            byte,
+            "CP437 glyph was blanked: {byte:#04X}"
+        );
+    }
 }
