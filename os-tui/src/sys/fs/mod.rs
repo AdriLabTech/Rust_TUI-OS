@@ -24,7 +24,6 @@ pub use crate::api::fs::{dirname, filename};
 pub use crate::sys::ata::BLOCK_SIZE;
 
 pub use block_device::block_count;
-use block_device::BlockDeviceIO;
 use dir_entry::DirEntry;
 use super_block::SuperBlock;
 
@@ -323,6 +322,11 @@ fn write_file(pathname: &str, content: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The lib itself never names `BlockDeviceIO`, so importing it at module
+    // scope made `cargo build --lib` report an unused import while these tests
+    // relied on it arriving through `use super::*`. It belongs to the tests.
+    use block_device::BlockDeviceIO;
 
     /// A clean in-memory filesystem, independent of what other tests did to
     /// the global block device.

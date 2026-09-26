@@ -13,6 +13,20 @@ setup:
 output = video          # video, serial
 mode = release
 
+# Keyboard layout compiled into the kernel. The PS/2 driver reads this with
+# option_env! at build time, so it is baked in rather than chosen at runtime.
+# `image` always touches src/lib.rs, so changing this really does rebuild.
+#
+# The guard is not decoration: `init` discards `set_keyboard`'s result, so a
+# name the decoder does not know would build a machine whose keyboard never
+# works, with nothing printed to say why.
+keyboard = qwerty
+known-keyboards = azerty dvorak qwerty
+ifeq ($(filter $(keyboard),$(known-keyboards)),)
+$(error keyboard must be one of: $(known-keyboards) -- got '$(keyboard)')
+endif
+export TUIOS_KEYBOARD = $(keyboard)
+
 # Emulation options
 arch = x86_64
 cpu = core2duo
