@@ -71,6 +71,18 @@ def hmp_sendkey(key):
     return f"sendkey {key}"
 
 
+# HMP reports failure in prose, as in "invalid parameter: space", while the QMP
+# reply around it is a success, so the returned text is all there is to go on.
+# Both `sendkey` and `pmemsave` answer this way, which is why one check covers
+# both.
+HMP_ERROR_MARKERS = ("rror", "nvalid")
+
+
+def hmp_failed(out):
+    """True when an HMP reply carries an error message instead of a result."""
+    return any(marker in out for marker in HMP_ERROR_MARKERS)
+
+
 # CP437's low range holds glyphs, not controls: the triangles, the arrows and
 # the card suits. Python's `cp437` codec disagrees, treating 0x00-0x1F as C0
 # control characters in both directions, so it can neither encode nor decode
@@ -175,7 +187,7 @@ def read_screen(mon, base=VGA_BASE, cols=COLS, rows=ROWS):
     os.close(fd)
     try:
         out = mon.hmp(hmp_pmemsave(base, cols * rows * 2, path)).strip()
-        if "rror" in out or "nvalid" in out:  # pmemsave reports failures in prose
+        if hmp_failed(out):  # pmemsave reports failures in prose
             raise RuntimeError(f"pmemsave failed: {out}")
         with open(path, "rb") as fh:
             data = fh.read()
@@ -187,9 +199,17 @@ def read_screen(mon, base=VGA_BASE, cols=COLS, rows=ROWS):
 
 
 def send_keys(mon, keys, delay=0.12):
-    """Type each key with its own `sendkey` — QEMU takes one key per command."""
+    """Type each key with its own `sendkey` — QEMU takes one key per command.
+
+    A key name QEMU does not know is reported and raises, rather than being
+    dropped. Otherwise a typo silently sends nothing and the dump that follows
+    looks like a successful run, which is the worst way for this tool to fail:
+    it would confirm a screen state that was never reached.
+    """
     for key in keys.split():
-        mon.hmp(hmp_sendkey(key))
+        out = mon.hmp(hmp_sendkey(key))
+        if hmp_failed(out):
+            raise RuntimeError(f"QEMU did not send the key {key!r}: {out.strip()}")
         time.sleep(delay)
 
 

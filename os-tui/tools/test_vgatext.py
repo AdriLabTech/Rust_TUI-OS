@@ -153,6 +153,40 @@ class HmpCommand(unittest.TestCase):
         self.assertEqual(vgatext.hmp_sendkey("ret"), "sendkey ret")
 
 
+class SendKeys(unittest.TestCase):
+    """`send_keys` must not swallow a key QEMU refused to send."""
+
+    class FakeMonitor:
+        """Stands in for the QMP client, replaying a canned reply per command."""
+
+        def __init__(self, replies):
+            self.replies = replies
+            self.sent = []
+
+        def hmp(self, command_line):
+            self.sent.append(command_line)
+            return self.replies.pop(0)
+
+    def test_sends_every_key_in_order(self):
+        mon = self.FakeMonitor(["", "", ""])
+        vgatext.send_keys(mon, "l s ret", delay=0)
+        self.assertEqual(mon.sent, ["sendkey l", "sendkey s", "sendkey ret"])
+
+    def test_raises_when_qemu_rejects_a_key_name(self):
+        # QEMU answers an unknown key in prose, at the HMP level, so the QMP
+        # reply is a success and only the returned text says "invalid parameter".
+        # `space` is the trap: the key exists, the name is `spc`.
+        mon = self.FakeMonitor(["invalid parameter: space"])
+        with self.assertRaises(RuntimeError) as caught:
+            vgatext.send_keys(mon, "space", delay=0)
+        self.assertIn("space", str(caught.exception))
+
+    def test_raises_on_a_later_key_not_only_the_first(self):
+        mon = self.FakeMonitor(["", "invalid parameter: zzz"])
+        with self.assertRaises(RuntimeError):
+            vgatext.send_keys(mon, "l zzz", delay=0)
+
+
 class QmpMessage(unittest.TestCase):
     def test_builds_a_json_command(self):
         raw = vgatext.qmp_message("quit")
