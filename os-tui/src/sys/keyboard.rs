@@ -130,6 +130,20 @@ fn set_keyboard(layout: &str) -> bool {
     }
 }
 
+/// The layout the decoder is running right now, read from the live decoder
+/// rather than from `option_env!` a second time, so it reports the driver's
+/// actual state instead of restating the build variable. `"none"` means `init`
+/// was handed a name the decoder does not know, which is a machine with no
+/// keyboard: `set_keyboard` refused it and `init` ignored the refusal.
+pub fn layout_name() -> &'static str {
+    match *KEYBOARD.lock() {
+        Some(KeyboardDecoder::Azerty(_)) => "azerty",
+        Some(KeyboardDecoder::Dvorak(_)) => "dvorak",
+        Some(KeyboardDecoder::Qwerty(_)) => "qwerty",
+        None => "none",
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct KeyboardLayout;
 
@@ -146,11 +160,9 @@ impl KeyboardLayout {
 impl FileIO for KeyboardLayout {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
         int::without_interrupts(|| {
-            let layout = match *KEYBOARD.lock() {
-                Some(KeyboardDecoder::Azerty(_)) => "azerty",
-                Some(KeyboardDecoder::Dvorak(_)) => "dvorak",
-                Some(KeyboardDecoder::Qwerty(_)) => "qwerty",
-                _ => return Err(()),
+            let layout = match layout_name() {
+                "none" => return Err(()),
+                name => name,
             };
             let n = layout.len();
             if n > buf.len() {
@@ -380,4 +392,53 @@ fn interrupt_handler() {
 pub fn init() {
     set_keyboard(option_env!("TUIOS_KEYBOARD").unwrap_or("qwerty"));
     sys::idt::set_irq_handler(sys::pic::KBD_IRQ, interrupt_handler);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `init` throws away `set_keyboard`'s result, so a layout name the
+    /// decoder does not know leaves `KEYBOARD` as `None` and the machine with
+    /// no keyboard at all, with no message anywhere. The Makefile rejects bad
+    /// names, and this is the in-kernel half of the same guard.
+    #[test_case]
+    fn the_driver_is_running_a_known_layout_after_init() {
+        let name = layout_name();
+        assert!(
+            matches!(name, "qwerty" | "azerty" | "dvorak"),
+            "the driver came up with layout {:?}; a keyboard that is not one of \
+             the three known layouts is a kernel with no keyboard at all",
+            name
+        );
+    }
+
+    /// Compares the layout the driver is actually running against the one the
+    /// build asked for, so `make test keyboard=azerty` fails if the Makefile
+    /// ever stops reaching the compiler. Under the default `qwerty` both sides
+    /// are qwerty and the test is satisfied but not informative.
+    #[test_case]
+    fn the_compiled_layout_is_the_one_the_build_asked_for() {
+        let expected = option_env!("TUIOS_KEYBOARD").unwrap_or("qwerty");
+        assert_eq!(
+            layout_name(),
+            expected,
+            "the driver is not running the layout this binary was built with"
+        );
+    }
+
+    /// The list the Makefile validates `keyboard=` against, pinned here so the
+    /// two cannot drift apart.
+    #[test_case]
+    fn the_three_named_layouts_are_accepted_and_others_are_not() {
+        for name in ["qwerty", "azerty", "dvorak"] {
+            assert!(
+                KeyboardDecoder::from(name).is_some(),
+                "the Makefile offers {} but the driver rejects it",
+                name
+            );
+        }
+        assert!(KeyboardDecoder::from("qwertz").is_none());
+        assert!(KeyboardDecoder::from("").is_none());
+    }
 }
