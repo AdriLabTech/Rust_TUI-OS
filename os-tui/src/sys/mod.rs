@@ -8,11 +8,19 @@ macro_rules! printk {
 #[macro_export]
 macro_rules! debug {
     ($($arg:tt)*) => ({
-        let csi_color = $crate::api::console::Style::color("blue");
-        let csi_reset = $crate::api::console::Style::reset();
-        $crate::sys::console::print_fmt(format_args!(
-            "{}DEBUG: {}{}\n", csi_color, format_args!($($arg)*), csi_reset
-        ));
+        // Gated the same way `log!` is, and for the same reason. `make test` runs
+        // with no `-drive`, so `Drive::open(0,0)` succeeds with a made-up
+        // geometry and every block read reports an ATA error: this macro alone
+        // was responsible for 4,193,465 lines of output, which buries the one
+        // line of test results that matters. A test run should read as a test
+        // run.
+        if !cfg!(test) {
+            let csi_color = $crate::api::console::Style::color("blue");
+            let csi_reset = $crate::api::console::Style::reset();
+            $crate::sys::console::print_fmt(format_args!(
+                "{}DEBUG: {}{}\n", csi_color, format_args!($($arg)*), csi_reset
+            ));
+        }
     });
 }
 
