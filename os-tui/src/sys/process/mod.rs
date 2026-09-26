@@ -30,10 +30,13 @@ use table::{
     PROCESS_TABLE,
     current_process,
     id, set_id,
-    set_dir,
     env, set_env_var,
     user,
 };
+
+// `cd` needs to move the current working directory, which is per-process
+// state, so this has to be reachable from `usr`.
+pub use table::set_dir;
 
 use crate::sys::console::Console;
 use crate::sys::fs::{Device, Resource};
