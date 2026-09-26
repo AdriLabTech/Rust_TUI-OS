@@ -1,6 +1,6 @@
 # TUI-OS Desktop Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. On top of the skill's per-task commit step, this project follows a **branch-per-task workflow**: each task is implemented on its own branch (`feat/<name>`), reviewed and merged back to `trunk` with `git merge --no-ff`, the branch is deleted, and the human partner is checked in before the next task starts.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. On top of the skill's per-task commit step, this project follows a **branch-per-task workflow**: each task is implemented on its own branch (`feat/<name>`), reviewed and merged back to `main` with `git merge --no-ff`, the branch is deleted, and the human partner is checked in before the next task starts.
 
 **Goal:** Convert the TUI-OS boot shell into a Spanish-language TUI desktop (dock + fullscreen apps: Terminal with a functional command set, a 1:1 port of the files app, System, Help), booting on VGA 80×25, with a disk that is formatted and seeded at first boot.
 
@@ -103,7 +103,7 @@ Expected: builds, boots headless in QEMU, `test_runner` prints each `test_*` res
 git checkout -b fix/test-harness
 git add src/api/font.rs src/sys/process/spawn.rs
 git commit -m "fix: make cargo test build without trimmed dsk assets"
-git checkout trunk && git merge --no-ff fix/test-harness -m "Merge fix/test-harness: repair make test"
+git checkout main && git merge --no-ff fix/test-harness -m "Merge fix/test-harness: repair make test"
 git branch -d fix/test-harness
 ```
 
@@ -136,7 +136,11 @@ pub static APPS: &[(AppKind, &str, &str)] = &[
 // src/usr/desktop.rs
 pub fn main() -> !                       // owns wallpaper + dock; runs the loop
 pub enum DesktopCmd { None, Open(AppKind), Halt, Close, Switch(AppKind) }
-fn route_key(app: Option<AppKind>, dock_index: usize, key: DecodedKey)
+// Takes a KeyCode, not a DecodedKey: every dock-relevant key (arrows, Enter,
+// Esc, F1-F5) arrives as DecodedKey::RawKey(code), so the desktop unwraps it
+// before calling. Keeping the helper on KeyCode makes the test below compile
+// as written and keeps the function pure.
+fn route_key(app: Option<AppKind>, dock_index: usize, key: KeyCode)
     -> (DesktopCmd, usize)                // pure, testable
 pub struct Desktop { app: Option<AppKind>, dock_index: usize,
     terminal: TerminalApp, files: FilesApp, sysinfo: SysInfoApp, help: HelpApp }
@@ -201,10 +205,12 @@ Expected: the new `route_key_desktop_navigation` test passes; all prior tests st
 Run: `make image`, then boot headless and dump the screen:
 
 ```bash
-qemu-system-x86_64 -m 32 -smp 2 -cpu core2duo -drive file=disk.img,format=raw \
-  -monitor telnet:127.0.0.1:7781,server,nowait -display none &
-sleep 7; python3 /tmp/opencode/vgatext.py --port 7781; pkill -f qemu-system-x86_64
+make dump
 ```
+
+(`make dump` boots QEMU headless with a QMP socket, waits `bootwait` seconds,
+prints the 80x25 text buffer, and kills the VM. `make dump KEYS="l s ret"` types
+before dumping; `make dump COLORS=true` marks cells tinted off the default ink.)
 
 Expected: boots to the terminal view (output identical in spirit to today — full brand/UI polish is Task 3).
 
@@ -214,13 +220,32 @@ Expected: boots to the terminal view (output identical in spirit to today — fu
 git checkout -b feat/desktop-framework
 git add src/usr
 git commit -m "feat: desktop framework with enum dispatch (AppKind/AppAction), split shell into apps"
-git checkout trunk && git merge --no-ff feat/desktop-framework -m "Merge feat/desktop-framework"
+git checkout main && git merge --no-ff feat/desktop-framework -m "Merge feat/desktop-framework"
 git branch -d feat/desktop-framework
 ```
 
 ---
 
-### Task 3: Desktop UI (wallpaper, title bar, dock, status)
+### Task 3: Desktop UI (dock + move the existing rendering into the desktop split)
+
+> **Reality check (2026-09-25, verified with `make dump` against the prebuilt
+> image).** Most of this task is already written and already correct inside
+> `src/usr/shell.rs`, so this task is **not** "build the UI from scratch" — it is
+> "add the dock and relocate the existing render functions":
+>
+> | Deliverable below | Already exists |
+> |---|---|
+> | row 0 title bar, White on Blue, version + clock | `Shell::render_title` |
+> | wallpaper: wordmark + tagline + `────── · ──────` hairline, no ASCII art | `Shell::render_home` |
+> | row 24 status with MEM / UP / clock | `Shell::render_status` |
+> | hint bar + input box | `Shell::render_hint`, `Shell::render_input` |
+> | Task 7's live RAM sparkline | `Shell::render_sysinfo` (Gauge + Sparkline) |
+> | `format_uptime` → `0s` / `1m 5s` / `1h 1m 1s` | `format_uptime(seconds: f64)` |
+>
+> What genuinely does not exist yet: the **dock** (row 23), the 5-row desktop
+> layout, `format_size`, and the relocation into `desktop.rs` / `apps/`.
+> Do not rewrite the rendering that already meets the spec — move it.
+> `format_uptime` keeps its existing `(f64) -> String` signature.
 
 **Files:**
 - Modify: `src/usr/desktop.rs` (render pipeline, dock widget)
@@ -233,7 +258,7 @@ git branch -d feat/desktop-framework
   - rows 1..=22 main area: wallpaper when `focus == None`; otherwise the focused app renders fullscreen.
   - row 23 dock: `▸ Archivos  ▸ Terminal  ▸ Sistema  ▸ Ayuda  ░  Apagar` on Black(0)/LightGray(7); the selected item inverted LightCyan bg + Black fg.
   - row 24 status: ` MEM … ` left, ` UP … ` center, clock right, on Blue(1)/White(15).
-- `util.rs`: `pub fn format_uptime(secs: usize) -> String` and `pub fn format_size(n: usize) -> String` (binary units, Spanish `M`/`K` suffixes).
+- `util.rs`: `pub fn format_uptime(secs: f64) -> String` (moved unchanged from `shell.rs`) and `pub fn format_size(n: usize) -> String` (binary units, Spanish `M`/`K` suffixes).
 
 - [ ] **Step 1: Write the failing tests — widget atoms**
 
@@ -242,9 +267,9 @@ git branch -d feat/desktop-framework
 ```rust
 #[test_case]
 fn format_uptime_parts() {
-    assert_eq!(format_uptime(0), "0s");
-    assert_eq!(format_uptime(65), "1m 5s");
-    assert_eq!(format_uptime(3661), "1h 1m 1s");
+    assert_eq!(format_uptime(0.0), "0s");
+    assert_eq!(format_uptime(65.0), "1m 5s");
+    assert_eq!(format_uptime(3661.0), "1h 1m 1s");
 }
 
 #[test_case]
@@ -290,7 +315,7 @@ Run: `make test` → FAIL (`util` module / helpers missing).
 - [ ] **Step 4: Run tests + screendump verification**
 
 Run: `make test` → new tests pass. Then `make image` and boot + `vgatext.py` (same as Task 2 Step 5). Verify in the dump:
-- title bar shows `‹ Escritorio` and a clock; wallpaper art + tagline + `░▒▓█` horizon; dock row with `▸` on the selected item and `Apagar` at the end; status line with MEM/UP/clock; **no line over 80 chars**.
+- title bar shows `‹ Escritorio` and a clock; wallpaper wordmark + tagline + the `────── · ──────` hairline and **no** `░▒▓█` horizon (retired by spec §2); dock row with `▸` on the selected item and `Apagar` at the end; status line with MEM/UP/clock; **no line over 80 chars**.
 
 - [ ] **Step 5: Commit + merge**
 
@@ -298,7 +323,7 @@ Run: `make test` → new tests pass. Then `make image` and boot + `vgatext.py` (
 git checkout -b feat/desktop-ui
 git add src/usr
 git commit -m "feat: desktop UI — wallpaper, title bar, dock and status (Spanish)"
-git checkout trunk && git merge --no-ff feat/desktop-ui -m "Merge feat/desktop-ui"
+git checkout main && git merge --no-ff feat/desktop-ui -m "Merge feat/desktop-ui"
 git branch -d feat/desktop-ui
 ```
 
@@ -384,7 +409,7 @@ pub fn init() {
 
 - [ ] **Step 4: Run tests + boot verification**
 
-Run: `make test` → passes. Then `make image`, delete `disk.img` (`rm -f disk.img`), run `make image` again (fresh 32M disk), boot and check with `vgatext.py` that `ls`/the Files scaffold see `/bienvenida.txt`; the serial log line `TUI-OS: no MFS superblock found...` appears on first boot only.
+Run: `make test` → passes. Then `make image`, delete `disk.img` (`rm -f disk.img`), run `make image` again (fresh 32M disk), boot and check with `make dump` that `ls`/the Files scaffold see `/bienvenida.txt`; the serial log line `TUI-OS: no MFS superblock found...` appears on first boot only.
 
 - [ ] **Step 5: Commit + merge**
 
@@ -392,7 +417,7 @@ Run: `make test` → passes. Then `make image`, delete `disk.img` (`rm -f disk.i
 git checkout -b feat/fs-seed
 git add src/sys/fs/mod.rs
 git commit -m "feat: format and seed the MFS disk at first boot (bienvenida/manual/usr)"
-git checkout trunk && git merge --no-ff feat/fs-seed -m "Merge feat/fs-seed"
+git checkout main && git merge --no-ff feat/fs-seed -m "Merge feat/fs-seed"
 git branch -d feat/fs-seed
 ```
 
@@ -495,7 +520,7 @@ Run: `make test` → passes. Then `make image`, boot, and drive the terminal via
 git checkout -b feat/terminal-commands
 git add src/usr/apps/terminal.rs
 git commit -m "feat: full terminal command set (fs, apps, system) with Spanish help"
-git checkout trunk && git merge --no-ff feat/terminal-commands -m "Merge feat/terminal-commands"
+git checkout main && git merge --no-ff feat/terminal-commands -m "Merge feat/terminal-commands"
 git branch -d feat/terminal-commands
 ```
 
@@ -562,13 +587,13 @@ fn esc_layer_closes_dialog_before_app() {
     format_mem();
     mount_mem();
     let mut app = FilesApp::new();
-    let key = DecodedKey::Char('n'); // open "new" dialog
+    let key = DecodedKey::Unicode('n'); // open "new" dialog
     assert_eq!(app.handle_key(key), AppAction::Keep);
     assert!(app.dialog_open());
     assert_eq!(app.handle_key(DecodedKey::RawKey(KeyCode::Esc)), AppAction::Keep); // dialog closed
     assert!(!app.dialog_open());
     assert_eq!(app.handle_key(DecodedKey::RawKey(KeyCode::Esc)), AppAction::Close); // app closed
-    assert_eq!(app.handle_key(DecodedKey::Char('q')), AppAction::Close);
+    assert_eq!(app.handle_key(DecodedKey::Unicode('q')), AppAction::Close);
 }
 ```
 
@@ -596,7 +621,7 @@ Run: `make test` → FAIL (`files::fsops` missing).
 git checkout -b feat/files-app
 git add src/usr/apps/files src/usr/apps/mod.rs src/usr/apps/terminal.rs
 git commit -m "feat: Files app — 1:1 port of the files app reference onto MFS (3 panels, dialogs, preview)"
-git checkout trunk && git merge --no-ff feat/files-app -m "Merge feat/files-app"
+git checkout main && git merge --no-ff feat/files-app -m "Merge feat/files-app"
 git branch -d feat/files-app
 ```
 
@@ -634,7 +659,7 @@ fn sparkline_ring_buffer() {
 - [ ] **Step 4: Full end-to-end verification script**
 
 - `make test` → all `#[test_case]` green.
-- `make image` from a clean `disk.img`; boot headless; run a scripted monitor session asserting (via `vgatext.py` dumps) each of: wallpaper; dock selection moves with ←/→; F1 help app; F2 system app (sparkline row visible as `▁▂▃▄▅▆▇█` glyphs); F3 terminal + `ls` showing the seeded files; `abrir sistema` returns to System; F4 Files navigation into `/usr`; `q` returns to desktop; `F5` from an app returns to desktop.
+- `make image` from a clean `disk.img`; boot headless; run a scripted monitor session asserting (via `make dump`) each of: wallpaper; dock selection moves with ←/→; F1 help app; F2 system app (sparkline row visible as `▁▂▃▄▅▆▇█` glyphs); F3 terminal + `ls` showing the seeded files; `abrir sistema` returns to System; F4 Files navigation into `/usr`; `q` returns to desktop; `F5` from an app returns to desktop.
 - Confirm `TUIO_VERSION` env is exported (version shows `v0.1.0` everywhere; no `0.13.0` and no trace of the original project in the dump or in `strings` of the image except `LICENSE` attribution).
 
 - [ ] **Step 5: Update docs**
@@ -648,6 +673,6 @@ fn sparkline_ring_buffer() {
 git checkout -b feat/integration
 git add src/usr/apps/sysinfo.rs README.md docs
 git commit -m "feat: System app RAM sparkline; full integration verification"
-git checkout trunk && git merge --no-ff feat/integration -m "Merge feat/integration"
+git checkout main && git merge --no-ff feat/integration -m "Merge feat/integration"
 git branch -d feat/integration
 ```

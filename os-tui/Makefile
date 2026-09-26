@@ -1,4 +1,4 @@
-.PHONY: setup image qemu screenshot test clean
+.PHONY: setup image qemu screenshot dump test clean
 .EXPORT_ALL_VARIABLES:
 
 # ---------------------------------------------------------------------------
@@ -18,6 +18,7 @@ arch = x86_64
 cpu = core2duo
 smp = 2
 memory = 32
+bootwait = 8
 kvm = false
 monitor = false
 
@@ -76,6 +77,18 @@ screenshot:
 	printf 'screendump /tmp/tuios.ppm\nquit\n' | timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/7777; cat >&3; cat <&3' || true
 	convert /tmp/tuios.ppm /tmp/tuios.png
 	echo "Saved /tmp/tuios.png"
+
+# Read the 80x25 VGA text buffer back as text. Boots headless with a QMP
+# socket, waits for the desktop, then decodes 0xB8000. Pass KEYS="l s ret" to
+# type before dumping, COLORS=true to mark tinted cells.
+qmp-sock = /tmp/tuios-qmp.sock
+
+dump:
+	rm -f $(qmp-sock)
+	($(qemu) $(qemu-opts) -qmp unix:$(qmp-sock),server,nowait -display none &) ; \
+	sleep $(bootwait) ; \
+	python3 tools/vgatext.py --socket $(qmp-sock) $(if $(KEYS),--keys "$(KEYS)",) $(if $(COLORS),--colors,) ; \
+	pkill -f 'qemu-system-$(arch)' || true
 
 test-opts = --lib
 ifeq ($(mode),release)

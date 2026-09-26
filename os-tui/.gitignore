@@ -3,3 +3,4 @@ disk.img
 TODO.md
 *.bin
 tuios-*.img
+__pycache__/
